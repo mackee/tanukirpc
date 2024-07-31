@@ -1,7 +1,6 @@
 # tanukirpc
 
-`tanukirpc` is a practical, fast, type-safe, and easy-to-use RPC/Router library for Go. This library base on [`go-chi/chi`](https://github.com/go-chi/chi).
-
+`tanukirpc` is a practical, fast-developing, type-safe, and easy-to-use RPC/Router library for Go. This library base on [`go-chi/chi`](https://github.com/go-chi/chi).
 
 ## Installation
 
@@ -17,34 +16,33 @@ This is a simple example of how to use `tanukirpc`.
 package main
 
 import (
-    "context"
-    "fmt"
-    "net/http"
+	"fmt"
+	"net/http"
 
-    "github.com/mackee/tanukirpc"
+	"github.com/mackee/tanukirpc"
 )
 
-type HelloRequest struct {
-    Name string `urlparam:"name"`
+type helloRequest struct {
+	Name string `urlparam:"name"`
 }
 
-type HelloResponse struct {
-    Message string `json:"message"`
+type helloResponse struct {
+	Message string `json:"message"`
 }
 
-func Hello(ctx *tanukirpc.Context[struct{}], req *HelloRequest) (*HelloResponse, error) {
-    return &HelloResponse{
-        Message: fmt.Sprintf("Hello, %s!", req.Name),
-    }, nil
+func hello(ctx tanukirpc.Context[struct{}], req helloRequest) (*helloResponse, error) {
+	return &helloResponse{
+		Message: fmt.Sprintf("Hello, %s!", req.Name),
+	}, nil
 }
 
 func main() {
-    r := tanukirpc.NewRouter(struct{}{})
-    r.GET("/hello/{name}", tanukirpc.NewHandler(Hello))
+	r := tanukirpc.NewRouter(struct{}{})
+	r.Get("/hello/{name}", tanukirpc.NewHandler(hello))
 
-    if err := http.ListenAndServe(":8080", r); err != nil && err != http.ErrServerClosed {
-        fmt.Println(err)
-    }
+	if err := http.ListenAndServe(":8080", r); err != nil && err != http.ErrServerClosed {
+		fmt.Println(err)
+	}
 }
 ```
 
@@ -61,61 +59,48 @@ func main() {
 
 Registry injection is unique feature of `tanukirpc`. You can inject a registry object to the handler function.
 
-This is an example of database connection injection.
+Additionally, Registry can be generated for each request. For more details, please refer to [_example/simple-registry](./_example/simple-registry).
+
+### Request binding
+
+`tanukirpc` supports the following request bindings by default:
+
+* URL parameter (like a `/entity/{id}` path): use the `urlparam` struct tag
+* JSON (`application/json`): use the `json` struct tag
+* Form (`application/x-www-form-urlencoded`): use the `form` struct tag
+
+If you want to use other bindings, you can implement the `tanukirpc.Codec` interface and specify it using the `tanukirpc.WithCodec` option when initializing the router.
 
 ```go
-package main
+tanukirpc.NewRouter(YourRegistry, tanukirpc.WithCodec(yourCodec))
+```
 
-import (
-    "context"
-    "fmt"
-    "net/http"
-    "database/sql"
+### Request validation
 
-    "github.com/mackee/tanukirpc"
-)
+`tanukirpc` automatically validation by `go-playground/validator` when contains `validate` struct tag in request struct.
 
-type AccountRequest struct {
-    ID int `urlparam:"id"`
-}
-
-type AccountResponse struct {
-    Name string `json:"name"`
-}
-
-type Registry struct {
-    db *sql.DB
-}
-
-func Account(ctx *tanukirpc.Context[*Registry], req *AccountRequest) (*AccountResponse, error) {
-    var name string
-    if err := ctx.Registry().db.QueryRow("SELECT name FROM accounts WHERE id = ?", req.ID).Scan(&name); err == sql.ErrNoRows {
-        return nil, tanukirpc.WrapErrorWithStatus(err, http.StatusNotFound)
-    } else if err != nil {
-        return nil, fmt.Errorf("failed to get account: %w", err)
-    }
-
-    return &AccountResponse{
-        Name: name,
-    }, nil
-}
-
-func main() {
-    db, err := sql.Open(...)
-    if err != nil {
-        fmt.Println(err)
-        return
-    }
-    defer db.Close()
-
-    r := tanukirpc.NewRouter(&Registry{db: db})
-    r.GET("/account/{id}", tanukirpc.NewHandler(Account))
-
-    if err := http.ListenAndServe(":8080", r); err != nil && err != http.ErrServerClosed {
-        fmt.Println(err)
-    }
+```go
+type YourRequest struct {
+    Name string `form:"name" validate:"required"`
 }
 ```
+
+If you want to use custom validation, you can implement the `tanukirpc.Validatable` interface in your request struct. `tanukirpc` will call the `Validatable.Validate` method after binding the request and before calling the handler function.
+
+### Error handling
+
+`tanukirpc` has a default error handler. If you want to use custom error handling, you can implement the `tanukirpc.ErrorHooker` interface and use this with the `tanukirpc.WithErrorHooker` option when initializing the router.
+
+### Middleware
+
+You can use `tanukirpc` with [go-chi/chi/middleware](https://pkg.go.dev/github.com/go-chi/chi/v5@v5.1.0/middleware) or `func (http.Handler) http.Handler` style middlewares. [gorilla/handlers](https://pkg.go.dev/github.com/gorilla/handlers) is also included in this.
+
+If you want to use middleware, you can use `*Router.Use` or `*Router.With`.
+
+#### Use case
+
+* Database connection
+* Logger
 
 ## License
 
