@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"reflect"
 	"slices"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
@@ -219,12 +220,48 @@ func (c *urlParamCodec) Decode(r *http.Request, v any) error {
 			continue
 		}
 		param := ft.Tag.Get("urlparam")
-		if param != "" {
-			paramValue := chi.URLParam(r, param)
-			if paramValue == "" {
-				return fmt.Errorf("url param %s is required at field %s", param, ft.Name)
-			}
+		if param == "" {
+			continue
+		}
+		paramValue := chi.URLParam(r, param)
+		if paramValue == "" {
+			return fmt.Errorf("url param %s is required at field %s", param, ft.Name)
+		}
+		switch field.Kind() {
+		case reflect.String:
 			field.SetString(paramValue)
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			pi, err := strconv.ParseInt(paramValue, 10, 64)
+			if err != nil {
+				return fmt.Errorf("failed to parse int at field %s: %w", ft.Name, err)
+			}
+			field.SetInt(pi)
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			pu, err := strconv.ParseUint(paramValue, 10, 64)
+			if err != nil {
+				return fmt.Errorf("failed to parse uint at field %s: %w", ft.Name, err)
+			}
+			field.SetUint(pu)
+		case reflect.Float32, reflect.Float64:
+			pf, err := strconv.ParseFloat(paramValue, 64)
+			if err != nil {
+				return fmt.Errorf("failed to parse float at field %s: %w", ft.Name, err)
+			}
+			field.SetFloat(pf)
+		case reflect.Complex64, reflect.Complex128:
+			pc, err := strconv.ParseComplex(paramValue, 128)
+			if err != nil {
+				return fmt.Errorf("failed to parse complex at field %s: %w", ft.Name, err)
+			}
+			field.SetComplex(pc)
+		case reflect.Bool:
+			pb, err := strconv.ParseBool(paramValue)
+			if err != nil {
+				return fmt.Errorf("failed to parse bool at field %s: %w", ft.Name, err)
+			}
+			field.SetBool(pb)
+		default:
+			return fmt.Errorf("unsupported type at field %s: %s", ft.Name, field.Kind())
 		}
 	}
 
