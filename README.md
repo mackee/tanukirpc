@@ -61,6 +61,13 @@ Registry injection is unique feature of `tanukirpc`. You can inject a registry o
 
 Additionally, Registry can be generated for each request. For more details, please refer to [_example/simple-registry](./_example/simple-registry).
 
+#### Use case
+
+* Database connection
+* Logger
+* Authentication information
+* Resource binding by path parameter. Examples can be found in [_example/todo](./_example/todo).
+
 ### Request binding
 
 `tanukirpc` supports the following request bindings by default:
@@ -96,11 +103,6 @@ If you want to use custom validation, you can implement the `tanukirpc.Validatab
 You can use `tanukirpc` with [go-chi/chi/middleware](https://pkg.go.dev/github.com/go-chi/chi/v5@v5.1.0/middleware) or `func (http.Handler) http.Handler` style middlewares. [gorilla/handlers](https://pkg.go.dev/github.com/gorilla/handlers) is also included in this.
 
 If you want to use middleware, you can use `*Router.Use` or `*Router.With`.
-
-#### Use case
-
-* Database connection
-* Logger
 
 ## License
 
