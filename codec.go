@@ -12,14 +12,22 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
+	"github.com/hetiansu5/urlquery"
 )
 
 var (
 	ErrRequestNotSupportedAtThisCodec = errors.New("request not supported at this codec")
 	ErrRequestContinueDecode          = errors.New("request continue decode")
-	DefaultCodecList                  = CodecList{&urlParamCodec{}, NewFormCodec(), NewJSONCodec(), &nopCodec{}}
+	DefaultCodecList                  = CodecList{
+		NewURLParamCodec(),
+		NewQueryCodec(),
+		NewFormCodec(),
+		NewJSONCodec(),
+		&nopCodec{},
+	}
 )
 
+// Codec is a interface for encoding and decoding request and response.
 type Codec interface {
 	Name() string
 	Decode(r *http.Request, v any) error
@@ -43,6 +51,8 @@ const (
 	defaultFormCodecContentType = "application/x-www-form-urlencoded"
 )
 
+// NewJSONCodec returns a new JSONCodec. This codec supports request and response encoding and decoding.
+// The content type header of the request is application/json and */*, and the content type of the response is application/json.
 func NewJSONCodec() *codec {
 	return &codec{
 		contentTypes:        []string{defaultJSONCodecContentType},
@@ -58,6 +68,9 @@ func NewJSONCodec() *codec {
 	}
 }
 
+// NewFormCodec returns a new FormCodec. This codec supports request decoding only.
+// The content type header of the request is application/x-www-form-urlencoded.
+// If you want to use this codec, you need to set the struct field tag like a `form:"name"`.
 func NewFormCodec() *codec {
 	return &codec{
 		contentTypes:        []string{defaultFormCodecContentType},
@@ -163,6 +176,7 @@ func (e *ErrCodecEncode) Unwrap() error {
 	return e.err
 }
 
+// CodecList is list of Codec. This codec process the request and response in order.
 type CodecList []Codec
 
 func (c CodecList) Name() string {
@@ -196,6 +210,12 @@ func (c CodecList) Encode(w http.ResponseWriter, r *http.Request, v any) error {
 }
 
 type urlParamCodec struct{}
+
+// NewURLParamCodec returns a new URLParamCodec. This codec supports request decoding only.
+// If you want to url parameter that like a /hello/{name}, you can set the struct field tag like a `urlparam:"name"`.
+func NewURLParamCodec() *urlParamCodec {
+	return &urlParamCodec{}
+}
 
 func (c *urlParamCodec) Name() string {
 	return "urlparam"
@@ -269,6 +289,30 @@ func (c *urlParamCodec) Decode(r *http.Request, v any) error {
 }
 
 func (c *urlParamCodec) Encode(w http.ResponseWriter, r *http.Request, v any) error {
+	return ErrRequestNotSupportedAtThisCodec
+}
+
+type queryCodec struct{}
+
+// NewQueryCodec returns a new QueryCodec. This codec supports request decoding only.
+// If you want to query parameter that like a /hello?name=world, you can set the struct field tag like a `query:"name"`.
+func NewQueryCodec() *queryCodec {
+	return &queryCodec{}
+}
+
+func (c *queryCodec) Name() string {
+	return "query"
+}
+
+func (c *queryCodec) Decode(r *http.Request, v any) error {
+	qs := r.URL.Query().Encode()
+	if err := urlquery.Unmarshal([]byte(qs), v); err != nil {
+		return fmt.Errorf("failed to decode query: %w", err)
+	}
+	return ErrRequestContinueDecode
+}
+
+func (c *queryCodec) Encode(w http.ResponseWriter, r *http.Request, v any) error {
 	return ErrRequestNotSupportedAtThisCodec
 }
 

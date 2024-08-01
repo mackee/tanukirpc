@@ -49,7 +49,7 @@ func main() {
 ## Features
 
 - :o: Type-safe request/response handler
-- :o: URL parameter, JSON, Form, or custom binding
+- :o: URL parameter, Query String, JSON, Form, or custom binding
 - :o: Request validation by [go-playground/validator](https://github.com/go-playground/validator)
 - :o: Custom error handling
 - :o: Registry injection
@@ -73,6 +73,7 @@ Additionally, Registry can be generated for each request. For more details, plea
 `tanukirpc` supports the following request bindings by default:
 
 * URL parameter (like a `/entity/{id}` path): use the `urlparam` struct tag
+* Query String: use the `query` struct tag
 * JSON (`application/json`): use the `json` struct tag
 * Form (`application/x-www-form-urlencoded`): use the `form` struct tag
 
