@@ -81,13 +81,22 @@ func (t *typeScriptClientGenerator) generate(routes []RoutePath) error {
 			Path:   r.Path(),
 		}
 
-		if of, err := t.typeInfo(h.Req()); err != nil {
+		// query of request
+		if of, err := t.typeInfo(h.Req(), "query"); err != nil {
+			return fmt.Errorf("failed to generate request type of route %s %s: %w", r.Method(), r.Path(), err)
+		} else {
+			mp.Query = of
+		}
+
+		// json of request
+		if of, err := t.typeInfo(h.Req(), "json"); err != nil {
 			return fmt.Errorf("failed to generate request type of route %s %s: %w", r.Method(), r.Path(), err)
 		} else {
 			mp.Request = of
 		}
 
-		if of, err := t.typeInfo(h.Res()); err != nil {
+		// json of response
+		if of, err := t.typeInfo(h.Res(), "json"); err != nil {
 			return fmt.Errorf("failed to generate response type of route %s %s: %w", r.Method(), r.Path(), err)
 		} else {
 			mp.Response = of
@@ -175,7 +184,7 @@ func (t *typeScriptClientGeneratorVoidField) RenderResponse(prefix string) strin
 	return "undefined;"
 }
 
-func (t *typeScriptClientGenerator) typeInfo(tt types.Type) (typeScriptClientGeneratorField, error) {
+func (t *typeScriptClientGenerator) typeInfo(tt types.Type, tagFilter string) (typeScriptClientGeneratorField, error) {
 	if tp, ok := tt.(*types.Pointer); ok {
 		tt = tp.Elem()
 	}
@@ -188,11 +197,11 @@ func (t *typeScriptClientGenerator) typeInfo(tt types.Type) (typeScriptClientGen
 		ts = tt
 	case *types.Named:
 		tu := tt.Underlying()
-		return t.typeInfo(tu)
+		return t.typeInfo(tu, tagFilter)
 	default:
 		return nil, fmt.Errorf("unsupported type: %s", tt.String())
 	}
-	fields, err := t.toFields(ts, "json")
+	fields, err := t.toFields(ts, tagFilter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert fields: %w", err)
 	}
@@ -328,6 +337,7 @@ func (t typeScriptClientGeneratorTemplateArgs) Methods() []typeScriptClientGener
 type typeScriptClientGeneratorTemplateArgsMethodPath struct {
 	Method   string
 	Path     string
+	Query    typeScriptClientGeneratorField
 	Request  typeScriptClientGeneratorField
 	Response typeScriptClientGeneratorField
 }
