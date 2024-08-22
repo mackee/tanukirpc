@@ -158,5 +158,5 @@ func staticRegistryHandlerExpectWhenNotExist(t *testing.T, resp *http.Response, 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	var em tanukirpc.ErrorMessage
 	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&em))
-	assert.Equal(t, "account not found", em.Error)
+	assert.Equal(t, "account not found", em.Error.Message)
 }
