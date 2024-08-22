@@ -5,9 +5,13 @@ type apiSchemaCollection = {
   "{{ .MethodPath }}": {
     Query: {{ .Query.RenderRequest "    " }}
     Request: {{ .Request.RenderRequest "    " }}
-    Response: {{ .Response.RenderResponse "    " }}
+    Response: {{ .Response.RenderResponse "    " }} | { error: { message: string } }
   };
 {{- end }}
+}
+
+export const isErrorResponse = (response: unknown): response is { error: { message: string } } => {
+  return !!((response as { error: unknown })?.error)
 }
 
 type method = keyof apiSchemaCollection extends `${infer M} ${string}` ? M : never;
@@ -38,13 +42,58 @@ const hasApiPathArgs = <PM extends keyof apiSchemaCollection>(args: unknown): ar
 }
 
 type pathCallArgs<PM extends keyof apiSchemaCollection> =
-  (apiSchemaCollection[PM]["Request"] extends undefined ? {} : { data: apiSchemaCollection[PM]["Request"] }) &
-  (apiPathBuilderArgs<PM> extends never ? {} : { pathArgs: apiPathBuilderArgs<PM> }) &
-  (apiSchemaCollection[PM]["Query"] extends undefined ? {} : { query: apiSchemaCollection[PM]["Query"]})
+  apiSchemaCollection[PM]["Request"] extends undefined
+    ? // if Request is undefined
+      apiSchemaCollection[PM]["Query"] extends undefined
+      ? // if Query is undefined
+        apiPathBuilderArgs<PM> extends never
+        ? Record<string, never>
+        : { pathArgs: apiPathBuilderArgs<PM> }
+      : // if Query is defined
+        apiPathBuilderArgs<PM> extends never
+        ? { query: apiSchemaCollection[PM]["Query"] }
+        : {
+            query: apiSchemaCollection[PM]["Query"];
+            pathArgs: apiPathBuilderArgs<PM>;
+          }
+    : // if Request is defined
+      apiSchemaCollection[PM]["Query"] extends undefined
+      ? // if Query is undefined
+        apiPathBuilderArgs<PM> extends never
+        ? { data: apiSchemaCollection[PM]["Request"] }
+        : {
+            data: apiSchemaCollection[PM]["Request"];
+            pathArgs: apiPathBuilderArgs<PM>;
+          }
+      : // if Query is defined
+        apiPathBuilderArgs<PM> extends never
+        ? {
+            data: apiSchemaCollection[PM]["Request"];
+            query: apiSchemaCollection[PM]["Query"];
+          }
+        : {
+            data: apiSchemaCollection[PM]["Request"];
+            query: apiSchemaCollection[PM]["Query"];
+            pathArgs: apiPathBuilderArgs<PM>;
+          };
 {{- else }}
 type pathCallArgs<PM extends keyof apiSchemaCollection> =
-  (apiSchemaCollection[PM]["Request"] extends undefined ? {} : { data: apiSchemaCollection[PM]["Request"] }) &
-  (apiSchemaCollection[PM]["Query"] extends undefined ? {} : { query: apiSchemaCollection[PM]["Query"]})
+  apiSchemaCollection[PM]["Request"] extends undefined
+    ? // if Request is undefined
+      apiSchemaCollection[PM]["Query"] extends undefined
+      ? // if Query is undefined
+        Record<string, never>
+      : // if Query is defined
+        { query: apiSchemaCollection[PM]["Query"] }
+    : // if Request is defined
+      apiSchemaCollection[PM]["Query"] extends undefined
+      ? // if Query is undefined
+        { data: apiSchemaCollection[PM]["Request"] }
+      : // if Query is defined
+        {
+            data: apiSchemaCollection[PM]["Request"];
+            query: apiSchemaCollection[PM]["Query"];
+        }
 {{- end }}
 
 type client = {
@@ -53,14 +102,14 @@ type client = {
 {{- end }}
 }
 
-export const newClient = (baseURL: string = ""): client => {
+export const newClient = (baseURL = ""): client => {
   const fetchByPath = async <PM extends keyof apiSchemaCollection>(method: method, path: string, args: pathCallArgs<PM>) => {
 {{- with .BuiltPaths }}
     const builtPath = hasApiPathBuilder(path) && hasApiPathArgs(args) ? apiPathBuilder[path](args.pathArgs) : path
 {{- else }}
     const builtPath = path
 {{- end }}
-    const query = hasApiQuery(args) ? "?" + (new URLSearchParams(args.query).toString()) : ""
+    const query = hasApiQuery(args) ? `?${new URLSearchParams(args.query).toString()}` : ""
     const body = hasApiRequest(args) ? JSON.stringify(args.data) : undefined
     const response = await fetch(baseURL + builtPath + query, {
       method,
@@ -77,12 +126,12 @@ export const newClient = (baseURL: string = ""): client => {
   }
 
 {{- range .Methods }}
-  const {{ .Lower }} = async <P extends pathsByMethod<"{{ .Upper }}">>(path: P, args: pathCallArgs<`{{ .Upper }} ${P}`>) => await fetchByPath("{{ .Upper }}", path, args)
+  const {{ .LowerVar }} = async <P extends pathsByMethod<"{{ .Upper }}">>(path: P, args: pathCallArgs<`{{ .Upper }} ${P}`>) => await fetchByPath("{{ .Upper }}", path, args)
 {{- end }}
 
   return {
 {{- range .Methods }}
-    {{ .Lower }},
+    {{ .LowerReturn }},
 {{- end }}
   }
 }

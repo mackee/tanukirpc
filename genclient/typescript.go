@@ -14,6 +14,10 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
+var jsonStringMarshalerWhitelist = map[string]struct{}{
+	"time.Time": {},
+}
+
 //go:embed typescriptclient.tmpl
 var typeScriptClientTemplate embed.FS
 
@@ -65,6 +69,7 @@ func newTypeScriptClientGenerator() (*typeScriptClientGenerator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse template: %w", err)
 	}
+
 	buf := &bytes.Buffer{}
 	return &typeScriptClientGenerator{
 		rw:   buf,
@@ -124,7 +129,7 @@ func (t *typeScriptClientGeneratorObjectField) RenderRequest(prefix string) stri
 	for _, field := range t.fields {
 		ret += field.RenderRequest(prefix+"  ") + "\n"
 	}
-	ret += prefix + "};"
+	ret += prefix + "}"
 	return ret
 }
 
@@ -133,55 +138,65 @@ func (t *typeScriptClientGeneratorObjectField) RenderResponse(prefix string) str
 	for _, field := range t.fields {
 		ret += field.RenderResponse(prefix+"  ") + "\n"
 	}
-	ret += prefix + "};"
+	ret += prefix + "}"
 	return ret
 }
 
-type typeScriptClientGeneratorLiteralField struct {
+type typeScriptClientGeneratorGenericField struct {
 	name       string
-	typename   string
+	typedef    typeScriptClientGeneratorField
 	isSlice    bool
 	isRequired bool
 	isOption   bool
 }
 
-func (t *typeScriptClientGeneratorLiteralField) sliceSuffix() string {
+func (t *typeScriptClientGeneratorGenericField) sliceSuffix() string {
 	if t.isSlice {
 		return "[]"
 	}
 	return ""
 }
 
-func (t *typeScriptClientGeneratorLiteralField) isRequiredOpRequest() string {
+func (t *typeScriptClientGeneratorGenericField) isRequiredOpRequest() string {
 	if t.isRequired {
 		return ""
 	}
 	return "?"
 }
 
-func (t *typeScriptClientGeneratorLiteralField) isRequiredOpResponse() string {
-	if t.isOption {
+func (t *typeScriptClientGeneratorGenericField) isRequiredOpResponse() string {
+	if !t.isRequired && t.isOption {
 		return "?"
 	}
 	return ""
 }
 
-func (t *typeScriptClientGeneratorLiteralField) RenderRequest(prefix string) string {
-	return fmt.Sprintf("%s%s%s: %s%s", prefix, t.name, t.isRequiredOpRequest(), t.typename, t.sliceSuffix())
+func (t *typeScriptClientGeneratorGenericField) RenderRequest(prefix string) string {
+	return fmt.Sprintf("%s%s%s: %s%s;", prefix, t.name, t.isRequiredOpRequest(), t.typedef.RenderRequest(prefix), t.sliceSuffix())
 }
 
-func (t *typeScriptClientGeneratorLiteralField) RenderResponse(prefix string) string {
-	return fmt.Sprintf("%s%s%s: %s%s", prefix, t.name, t.isRequiredOpResponse(), t.typename, t.sliceSuffix())
+func (t *typeScriptClientGeneratorGenericField) RenderResponse(prefix string) string {
+	return fmt.Sprintf("%s%s%s: %s%s;", prefix, t.name, t.isRequiredOpResponse(), t.typedef.RenderResponse(prefix), t.sliceSuffix())
+}
+
+type typeScriptClientGeneratorLiteralType string
+
+func (t typeScriptClientGeneratorLiteralType) RenderRequest(prefix string) string {
+	return string(t)
+}
+
+func (t typeScriptClientGeneratorLiteralType) RenderResponse(prefix string) string {
+	return string(t)
 }
 
 type typeScriptClientGeneratorVoidField struct{}
 
 func (t *typeScriptClientGeneratorVoidField) RenderRequest(prefix string) string {
-	return "undefined;"
+	return "undefined"
 }
 
 func (t *typeScriptClientGeneratorVoidField) RenderResponse(prefix string) string {
-	return "undefined;"
+	return "undefined"
 }
 
 func (t *typeScriptClientGenerator) typeInfo(tt types.Type, tagFilter string) (typeScriptClientGeneratorField, error) {
@@ -247,11 +262,38 @@ func (t *typeScriptClientGenerator) toFields(tt *types.Struct, filterTag string)
 			tagValue == "omitempty" {
 			option = true
 		}
+		if jsType := tag.Get("tstype"); jsType != "" {
+			fields = append(fields, &typeScriptClientGeneratorGenericField{
+				name:       fieldName,
+				typedef:    typeScriptClientGeneratorLiteralType(jsType),
+				isSlice:    false,
+				isRequired: required,
+				isOption:   option,
+			})
+			continue
+		}
 
 		ft := f.Type()
+
+		if nt, ok := ft.(*types.Named); ok {
+			if _, ok := jsonStringMarshalerWhitelist[nt.String()]; ok {
+				fields = append(fields, &typeScriptClientGeneratorGenericField{
+					name:       fieldName,
+					typedef:    typeScriptClientGeneratorLiteralType("string"),
+					isSlice:    false,
+					isRequired: required,
+					isOption:   option,
+				})
+				continue
+			}
+			ft = nt.Underlying()
+		}
 		if pt, ok := ft.(*types.Pointer); ok {
 			option = true
 			ft = pt.Elem()
+		}
+		if nt, ok := ft.(*types.Named); ok {
+			ft = nt.Underlying()
 		}
 
 		isSlice := false
@@ -259,20 +301,46 @@ func (t *typeScriptClientGenerator) toFields(tt *types.Struct, filterTag string)
 			ft = st.Elem()
 			isSlice = true
 		}
+		if pt, ok := ft.(*types.Pointer); ok {
+			ft = pt.Elem()
+		}
+		if nt, ok := ft.(*types.Named); ok {
+			ft = nt.Underlying()
+		}
+
+		if st, ok := ft.(*types.Struct); ok {
+			cfs, err := t.toFields(st, filterTag)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert fields: %w", err)
+			}
+			if f.Embedded() {
+				fields = append(fields, cfs...)
+				continue
+			}
+			fields = append(fields, &typeScriptClientGeneratorGenericField{
+				name:       fieldName,
+				typedef:    &typeScriptClientGeneratorObjectField{fields: cfs},
+				isSlice:    isSlice,
+				isRequired: required,
+				isOption:   option,
+			})
+			continue
+		}
+
 		if bt, ok := ft.(*types.Basic); ok {
 			typename, err := t.typeNameByBasicLit(bt)
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert basic type: %w", err)
 			}
-			fields = append(fields, &typeScriptClientGeneratorLiteralField{
+			fields = append(fields, &typeScriptClientGeneratorGenericField{
 				name:       fieldName,
-				typename:   typename,
+				typedef:    typeScriptClientGeneratorLiteralType(typename),
 				isSlice:    isSlice,
 				isRequired: required,
 				isOption:   option,
 			})
 		} else {
-			return nil, fmt.Errorf("unsupported field type: %s", ft.String())
+			return nil, fmt.Errorf("unsupported field type: %s type=%T", ft.String(), ft)
 		}
 
 	}
@@ -305,6 +373,7 @@ func (t typeScriptClientGeneratorTemplateArgs) BuiltPaths() []string {
 		if _, ok := smap[s]; ok {
 			continue
 		}
+		smap[s] = struct{}{}
 		ss = append(ss, s)
 	}
 	return ss
@@ -314,6 +383,20 @@ type typeScriptClientGeneratorTempalteArgsMethod string
 
 func (t typeScriptClientGeneratorTempalteArgsMethod) Lower() string {
 	return strings.ToLower(string(t))
+}
+
+func (t typeScriptClientGeneratorTempalteArgsMethod) LowerVar() string {
+	if t == "DELETE" {
+		return "_delete"
+	}
+	return t.Lower()
+}
+
+func (t typeScriptClientGeneratorTempalteArgsMethod) LowerReturn() string {
+	if t == "DELETE" {
+		return "delete: _delete"
+	}
+	return t.Lower()
 }
 
 func (t typeScriptClientGeneratorTempalteArgsMethod) Upper() string {

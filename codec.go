@@ -111,6 +111,9 @@ func (c *codec) Decode(r *http.Request, v any) error {
 	}
 
 	if err := c.decoderFunc(r.Body).Decode(v); err != nil {
+		if errors.Is(err, io.EOF) {
+			return ErrRequestContinueDecode
+		}
 		return &ErrCodecDecode{err: err}
 	}
 

@@ -29,7 +29,11 @@ func WrapErrorWithStatus(status int, err error) error {
 }
 
 type ErrorMessage struct {
-	Error string `json:"error"`
+	Error ErrorBody `json:"error"`
+}
+
+type ErrorBody struct {
+	Message string `json:"message"`
 }
 
 type ErrorHooker interface {
@@ -44,5 +48,5 @@ func (e *errorHooker) OnError(w http.ResponseWriter, req *http.Request, codec Co
 	} else {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
-	codec.Encode(w, req, ErrorMessage{Error: err.Error()})
+	codec.Encode(w, req, ErrorMessage{Error: ErrorBody{Message: err.Error()}})
 }
