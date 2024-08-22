@@ -1,17 +1,25 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
+	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/go-chi/cors"
 	"github.com/mackee/tanukirpc"
+	"github.com/mackee/tanukirpc/genclient"
 )
+
+//go:generate go run github.com/mackee/tanukirpc/cmd/gentypescript -out ./frontend/src/client.ts ./
 
 type Status string
 
@@ -36,7 +44,13 @@ type Registry struct {
 func main() {
 	reg := &Registry{db: map[string]*Task{}}
 	router := tanukirpc.NewRouter(reg)
+	router.Use(cors.Handler(cors.Options{
+		AllowedOrigins: []string{"http://localhost:*"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+	}))
+
 	router.Get("/api/ping", tanukirpc.NewHandler(pingHandler))
+	router.Get("/api/tasks", tanukirpc.NewHandler(tasksHandler))
 	router.Post("/api/tasks", tanukirpc.NewHandler(addTaskHandler))
 
 	tr := tanukirpc.NewTransformer(taskTransformer)
@@ -49,6 +63,7 @@ func main() {
 	address := "127.0.0.1:8080"
 	log.Printf("Server started at %s", address)
 
+	genclient.AnalyzeTarget(router)
 	server := &http.Server{Addr: address, Handler: router}
 
 	sig := make(chan os.Signal, 1)
@@ -75,22 +90,47 @@ func pingHandler(ctx tanukirpc.Context[*Registry], req struct{}) (*PingResponse,
 	return &PingResponse{Message: "pong"}, nil
 }
 
+type TasksResponse struct {
+	Tasks []*Task `json:"tasks"`
+}
+
+func tasksHandler(ctx tanukirpc.Context[*Registry], req struct{}) (*TasksResponse, error) {
+	tasks := make([]*Task, 0, len(ctx.Registry().db))
+	for _, task := range ctx.Registry().db {
+		tasks = append(tasks, task)
+	}
+	slices.SortFunc(tasks, func(a, b *Task) int {
+		return cmp.Compare(b.ID, a.ID)
+	})
+	return &TasksResponse{Tasks: tasks}, nil
+}
+
 type TaskNewInput struct {
 	Name        string `json:"name" form:"name" validate:"required"`
 	Description string `json:"description" form:"description"`
 }
 
 type AddTaskRequest struct {
-	Task TaskNewInput `json:"task" form:"task"`
+	Task TaskNewInput `json:"task" form:"task" validate:"required"`
 }
 
 type AddTaskResponse struct {
-	Task *Task `json:"task" form:"task"`
+	Task *Task `json:"task" required:"true"`
 }
 
 func addTaskHandler(ctx tanukirpc.Context[*Registry], req AddTaskRequest) (*AddTaskResponse, error) {
+	maxID := 0
+	for id := range ctx.Registry().db {
+		i, err := strconv.Atoi(id)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert id to int: %w", err)
+		}
+		if i > maxID {
+			maxID = i
+		}
+	}
 	task := &Task{
-		ID:          "1",
+		ID:          strconv.Itoa(maxID + 1),
 		Name:        req.Task.Name,
 		Description: req.Task.Description,
 		Status:      StatusTodo,
@@ -119,7 +159,7 @@ func taskTransformer(ctx tanukirpc.Context[*Registry]) (*RegistryWithTask, error
 }
 
 type TaskResponse struct {
-	Task *Task `json:"task"`
+	Task *Task `json:"task" required:"true"`
 }
 
 func getTaskHandler(ctx tanukirpc.Context[*RegistryWithTask], _ struct{}) (*TaskResponse, error) {
