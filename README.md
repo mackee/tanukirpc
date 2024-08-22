@@ -54,6 +54,10 @@ func main() {
 - :o: Custom error handling
 - :o: Registry injection
   - for a Dependency Injection
+- :o: A development server command that automatically restarts on file changes
+  - use `tanukiup` command
+- :o: Generate TypeScript client code
+  - use `gentypescript` command
 
 ### Registry injection
 
@@ -104,6 +108,39 @@ If you want to use custom validation, you can implement the `tanukirpc.Validatab
 You can use `tanukirpc` with [go-chi/chi/middleware](https://pkg.go.dev/github.com/go-chi/chi/v5@v5.1.0/middleware) or `func (http.Handler) http.Handler` style middlewares. [gorilla/handlers](https://pkg.go.dev/github.com/gorilla/handlers) is also included in this.
 
 If you want to use middleware, you can use `*Router.Use` or `*Router.With`.
+
+### `tanukiup` command
+
+The `tanukiup` command is very useful during development. When you start your server via the `tanukiup` command, it detects file changes, triggers a build, and restarts the server.
+
+You can use the `tanukiup` command as follows:
+```sh
+$ go run github.com/mackee/tanukirpc/cmd/tanukiup -dir ./...
+```
+
+The `-dir` option specifies the directory to be watched. By appending `...` to the end, it recursively includes all subdirectories in the watch scope. If you want to exclude certain directories, use the `-ignore-dir` option. You can specify multiple directories by providing comma-separated values or by using the option multiple times. By default, the server will restart when files with the `.go` extension are updated.
+
+Additionally, it detects the `go:generate` lines for the `gentypescript` command mentioned later, and automatically runs them before restarting.
+
+### Client code generation
+
+A web application server using `tanukirpc` can generate client-side code based on the type information of each endpoint.
+
+`gentypescript` generates client-side code specifically for TypeScript. By using the generated client implementation, you can send and receive API requests with type safety for each endpoint.
+
+To generate the client code, first call `genclient.AnalyzeTarget` with the router as an argument to clearly define the target router.
+
+Next, add the following go:generate line:
+
+```go
+//go:generate go run github.com/mackee/tanukirpc/cmd/gentypescript -out ./frontend/src/client.ts ./
+```
+
+The `-out` option specifies the output file name. Additionally, append `./` to specify the package to be analyzed.
+
+When you run `go generate ./` in the package containing this file, or when you start the server via the aforementioned `tanukiup` command, the TypeScript client code will be generated.
+
+For more detailed usage, refer to the [_example/todo](./_example/todo) directory.
 
 ## License
 
