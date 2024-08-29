@@ -1,41 +1,61 @@
 package tanukirpc
 
 import (
+	gocontext "context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/mackee/tanukirpc/internal/requestid"
 )
 
+var defaultMiddleware = []func(http.Handler) http.Handler{
+	requestid.Middleware,
+	middleware.RealIP,
+	middleware.Recoverer,
+}
+
 type Router[Reg any] struct {
-	cr             chi.Router
-	codec          Codec
-	contextFactory ContextFactory[Reg]
-	logger         *slog.Logger
-	errorHooker    ErrorHooker
+	cr                chi.Router
+	codec             Codec
+	contextFactory    ContextFactory[Reg]
+	logger            *slog.Logger
+	errorHooker       ErrorHooker
+	accessLogger      AccessLogger
+	defaultMiddleware []func(http.Handler) http.Handler
 }
 
 func NewRouterWithNoRegistry[Reg struct{}](opts ...RouterOption[Reg]) *Router[Reg] {
 	router := &Router[Reg]{
-		cr:             chi.NewRouter(),
-		codec:          DefaultCodecList,
-		contextFactory: &DefaultContextFactory[Reg]{registry: struct{}{}},
-		errorHooker:    &errorHooker{},
-		logger:         slog.Default(),
+		cr:                chi.NewRouter(),
+		codec:             DefaultCodecList,
+		contextFactory:    &DefaultContextFactory[Reg]{registry: struct{}{}},
+		errorHooker:       &errorHooker{},
+		logger:            NewLogger(slog.Default(), defaultLoggerKeys),
+		accessLogger:      &accessLogger{},
+		defaultMiddleware: defaultMiddleware,
 	}
 	router.apply(opts...)
+	router.Use(router.defaultMiddleware...)
+
 	return router
 }
 
 func NewRouter[Reg any](reg Reg, opts ...RouterOption[Reg]) *Router[Reg] {
 	router := &Router[Reg]{
-		cr:             chi.NewRouter(),
-		codec:          DefaultCodecList,
-		contextFactory: &DefaultContextFactory[Reg]{registry: reg},
-		errorHooker:    &errorHooker{},
-		logger:         slog.Default(),
+		cr:                chi.NewRouter(),
+		codec:             DefaultCodecList,
+		contextFactory:    &DefaultContextFactory[Reg]{registry: reg},
+		errorHooker:       &errorHooker{},
+		logger:            NewLogger(slog.Default(), defaultLoggerKeys),
+		accessLogger:      &accessLogger{},
+		defaultMiddleware: defaultMiddleware,
 	}
 	router.apply(opts...)
+	router.Use(router.defaultMiddleware...)
+
 	return router
 }
 
@@ -56,6 +76,8 @@ func (r *Router[Reg]) clone() *Router[Reg] {
 		codec:          r.codec,
 		contextFactory: r.contextFactory,
 		errorHooker:    r.errorHooker,
+		logger:         r.logger,
+		accessLogger:   r.accessLogger,
 	}
 }
 
@@ -135,9 +157,18 @@ func RouteWithTransformer[Reg1 any, Reg2 any](r *Router[Reg1], tr Transformer[Re
 			codec:          r.codec,
 			contextFactory: cf,
 			errorHooker:    r.errorHooker,
+			logger:         r.logger,
+			accessLogger:   r.accessLogger,
 		}
 		fn(r2)
 	})
+}
+
+func (r *Router[Reg]) accessLoggerLog(ctx gocontext.Context, w WrapResponseWriter, req *http.Request, err error, t1, t2 time.Time) error {
+	if r.accessLogger == nil {
+		return nil
+	}
+	return r.accessLogger.Log(ctx, r.logger, w, req, err, t1, t2)
 }
 
 type RouterOption[Reg any] func(*Router[Reg]) *Router[Reg]
@@ -173,6 +204,20 @@ func WithErrorHooker[Reg any](eh ErrorHooker) RouterOption[Reg] {
 func WithLogger[Reg any](logger *slog.Logger) RouterOption[Reg] {
 	return func(r *Router[Reg]) *Router[Reg] {
 		r.logger = logger
+		return r
+	}
+}
+
+func WithAccessLogger[Reg any](al AccessLogger) RouterOption[Reg] {
+	return func(r *Router[Reg]) *Router[Reg] {
+		r.accessLogger = al
+		return r
+	}
+}
+
+func WithDefaultMiddleware[Reg any](middlewares ...func(http.Handler) http.Handler) RouterOption[Reg] {
+	return func(r *Router[Reg]) *Router[Reg] {
+		r.defaultMiddleware = middlewares
 		return r
 	}
 }

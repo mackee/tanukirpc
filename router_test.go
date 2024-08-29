@@ -132,7 +132,6 @@ func newStaticRegistryHandler() http.Handler {
 		return &accountResponse{Name: name}, nil
 	}
 	router := tanukirpc.NewRouter(reg)
-	router.Use(middleware.Logger)
 	router.Get("/account", tanukirpc.NewHandler(accountHandler))
 
 	return router
