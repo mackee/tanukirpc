@@ -58,6 +58,7 @@ func main() {
   - use `tanukiup` command
 - :o: Generate TypeScript client code
   - use `gentypescript` command
+- :o: defer hooks for cleanup
 
 ### Registry injection
 
@@ -141,6 +142,19 @@ The `-out` option specifies the output file name. Additionally, append `./` to s
 When you run `go generate ./` in the package containing this file, or when you start the server via the aforementioned `tanukiup` command, the TypeScript client code will be generated.
 
 For more detailed usage, refer to the [_example/todo](./_example/todo) directory.
+
+### Defer hooks
+
+`tanukirpc` supports defer hooks for cleanup. You can register a function to be called after the handler function has been executed.
+
+```go
+func (ctx *tanukirpc.Context[struct{}], struct{}) (*struct{}, error) {
+    ctx.Defer(func() error {
+        // Close the database connection, release resources, logging, enqueue job etc...
+    })
+    return &struct{}{}, nil
+}
+```
 
 ## License
 

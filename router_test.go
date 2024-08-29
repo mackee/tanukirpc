@@ -39,6 +39,7 @@ func (tc testCase) assert(t *testing.T) {
 func TestRouter(t *testing.T) {
 	assert.True(t, true)
 
+	store := map[string]string{}
 	testCases := []testCase{
 		{
 			name:    "simple hello handler",
@@ -57,6 +58,12 @@ func TestRouter(t *testing.T) {
 			router:  newStaticRegistryHandler(),
 			request: newStaticRegistryHandlerRequest(t, "100"),
 			expect:  staticRegistryHandlerExpectWhenNotExist,
+		},
+		{
+			name:    "defer do handler",
+			router:  newDeferDoHandler(store),
+			request: newDeferDoHandlerRequest(t),
+			expect:  deferDoHandlerExpect(store),
 		},
 	}
 	for _, testCase := range testCases {
@@ -115,7 +122,6 @@ func newStaticRegistryHandler() http.Handler {
 		Name string `json:"name"`
 	}
 	accountHandler := func(ctx tanukirpc.Context[*registry], req accountRequest) (*accountResponse, error) {
-		println("accountHandler: %v", req.ID)
 		name, ok := ctx.Registry().db[req.ID]
 		if !ok {
 			return nil, tanukirpc.WrapErrorWithStatus(
@@ -126,7 +132,6 @@ func newStaticRegistryHandler() http.Handler {
 		return &accountResponse{Name: name}, nil
 	}
 	router := tanukirpc.NewRouter(reg)
-	router.Use(middleware.Logger)
 	router.Get("/account", tanukirpc.NewHandler(accountHandler))
 
 	return router
@@ -159,4 +164,51 @@ func staticRegistryHandlerExpectWhenNotExist(t *testing.T, resp *http.Response, 
 	var em tanukirpc.ErrorMessage
 	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&em))
 	assert.Equal(t, "account not found", em.Error.Message)
+}
+
+func newDeferDoHandler(store map[string]string) http.Handler {
+	type deferDoResponse struct {
+		Ok bool `json:"ok"`
+	}
+	deferDoHandler := func(ctx tanukirpc.Context[struct{}], req struct{}) (*deferDoResponse, error) {
+		ctx.Defer(func() error {
+			store["afterResponseDefer"] = store["beforeResponseDefer"] + "ok"
+			return nil
+		})
+		ctx.Defer(func() error {
+			store["beforeResponseDefer"] = "ok"
+			return nil
+		}, tanukirpc.DeferDoTimingBeforeResponse)
+		return &deferDoResponse{Ok: true}, nil
+	}
+	router := tanukirpc.NewRouter(struct{}{})
+	router.Use(middleware.Logger)
+	router.Get("/defer", tanukirpc.NewHandler(deferDoHandler))
+
+	return router
+}
+
+func newDeferDoHandlerRequest(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "/defer", nil)
+	require.NoError(t, err)
+	req.Header.Set("accept", "application/json")
+	return req
+}
+
+func deferDoHandlerExpect(store map[string]string) func(t *testing.T, resp *http.Response, err error) {
+	return func(t *testing.T, resp *http.Response, err error) {
+		require.NoError(t, err)
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		type deferDoResponse struct {
+			Ok bool `json:"ok"`
+		}
+		var body deferDoResponse
+		assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		assert.Equal(t, true, body.Ok)
+
+		assert.Equal(t, "ok", store["beforeResponseDefer"])
+		assert.Equal(t, "okok", store["afterResponseDefer"])
+	}
 }
