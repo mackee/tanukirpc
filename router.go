@@ -1,6 +1,7 @@
 package tanukirpc
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -10,6 +11,7 @@ type Router[Reg any] struct {
 	cr             chi.Router
 	codec          Codec
 	contextFactory ContextFactory[Reg]
+	logger         *slog.Logger
 	errorHooker    ErrorHooker
 }
 
@@ -19,6 +21,7 @@ func NewRouterWithNoRegistry[Reg struct{}](opts ...RouterOption[Reg]) *Router[Re
 		codec:          DefaultCodecList,
 		contextFactory: &DefaultContextFactory[Reg]{registry: struct{}{}},
 		errorHooker:    &errorHooker{},
+		logger:         slog.Default(),
 	}
 	router.apply(opts...)
 	return router
@@ -30,6 +33,7 @@ func NewRouter[Reg any](reg Reg, opts ...RouterOption[Reg]) *Router[Reg] {
 		codec:          DefaultCodecList,
 		contextFactory: &DefaultContextFactory[Reg]{registry: reg},
 		errorHooker:    &errorHooker{},
+		logger:         slog.Default(),
 	}
 	router.apply(opts...)
 	return router
@@ -162,6 +166,13 @@ func WithContextFactory[Reg any](cf ContextFactory[Reg]) RouterOption[Reg] {
 func WithErrorHooker[Reg any](eh ErrorHooker) RouterOption[Reg] {
 	return func(r *Router[Reg]) *Router[Reg] {
 		r.errorHooker = eh
+		return r
+	}
+}
+
+func WithLogger[Reg any](logger *slog.Logger) RouterOption[Reg] {
+	return func(r *Router[Reg]) *Router[Reg] {
+		r.logger = logger
 		return r
 	}
 }

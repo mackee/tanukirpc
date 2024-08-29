@@ -1,6 +1,9 @@
 package tanukirpc
 
-import "net/http"
+import (
+	"log/slog"
+	"net/http"
+)
 
 type Handler[Reg any] interface {
 	build(r *Router[Reg]) http.HandlerFunc
@@ -43,8 +46,17 @@ func (h *handler[Req, Res, Reg]) build(r *Router[Reg]) http.HandlerFunc {
 			return
 		}
 
+		if err := ctx.DeferDo(DeferDoTimingBeforeResponse); err != nil {
+			r.errorHooker.OnError(w, req, r.codec, err)
+			return
+		}
 		if err := r.codec.Encode(w, req, res); err != nil {
 			r.errorHooker.OnError(w, req, r.codec, err)
+			return
+		}
+
+		if err := ctx.DeferDo(DeferDoTimingAfterResponse); err != nil {
+			r.logger.ErrorContext(ctx, "defer do error", slog.Any("error", err))
 			return
 		}
 	}
