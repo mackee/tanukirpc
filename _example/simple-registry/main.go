@@ -106,7 +106,7 @@ func main() {
 	r.Post("/accounts", tanukirpc.NewHandler(createAccount))
 	r.Get("/account/{id}", tanukirpc.NewHandler(account))
 
-	if err := http.ListenAndServe(":8080", r); err != nil && err != http.ErrServerClosed {
+	if err := r.ListenAndServe(ctx, ":8080"); err != nil {
 		fmt.Println(err)
 	}
 }

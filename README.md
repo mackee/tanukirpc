@@ -40,7 +40,7 @@ func main() {
 	r := tanukirpc.NewRouter(struct{}{})
 	r.Get("/hello/{name}", tanukirpc.NewHandler(hello))
 
-	if err := http.ListenAndServe(":8080", r); err != nil && err != http.ErrServerClosed {
+	if err := r.ListenAndServe(context.Background(), ":8080"); err != nil {
 		fmt.Println(err)
 	}
 }
@@ -114,12 +114,17 @@ If you want to use middleware, you can use `*Router.Use` or `*Router.With`.
 
 The `tanukiup` command is very useful during development. When you start your server via the `tanukiup` command, it detects file changes, triggers a build, and restarts the server.
 
+### Usage
 You can use the `tanukiup` command as follows:
 ```sh
 $ go run github.com/mackee/tanukirpc/cmd/tanukiup -dir ./...
 ```
 
-The `-dir` option specifies the directory to be watched. By appending `...` to the end, it recursively includes all subdirectories in the watch scope. If you want to exclude certain directories, use the `-ignore-dir` option. You can specify multiple directories by providing comma-separated values or by using the option multiple times. By default, the server will restart when files with the `.go` extension are updated.
+- The `-dir` option specifies the directory to be watched. By appending `...` to the end, it recursively includes all subdirectories in the watch scope. If you want to exclude certain directories, use the `-ignore-dir` option. You can specify multiple directories by providing comma-separated values or by using the option multiple times. By default, the server will restart when files with the `.go` extension are updated.
+
+- The `-addr` option allows the `tanukiup` command to act as a server itself. After building and starting the server application created with `tanukirpc`, it proxies requests to this process. The application must be started with `*tanukirpc.Router.ListenAndServe`; otherwise, the `-addr` option will not function. Only the paths registered with `tanukirpc.Router` will be proxied to the server application.
+
+- Additionally, there is an option called `-catchall-target` that can be used in conjunction with `-addr`. This option allows you to proxy requests for paths that are not registered with `tanukirpc.Router` to another server address. This is particularly useful when working with a frontend development server (e.g., webpack, vite).
 
 Additionally, it detects the `go:generate` lines for the `gentypescript` command mentioned later, and automatically runs them before restarting.
 

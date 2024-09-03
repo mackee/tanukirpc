@@ -41,8 +41,20 @@ func main() {
 				DefaultText: "{outpath}",
 			},
 			&cli.StringFlag{
-				Name:  "port",
-				Usage: "port number to run the server",
+				Name:  "addr",
+				Usage: "port number to run the server. this use for the proxy mode.",
+			},
+			&cli.StringFlag{
+				Name:  "base-dir",
+				Usage: "base directory to watch. if not specified, the current directory is used",
+			},
+			&cli.StringFlag{
+				Name:  "temp-dir",
+				Usage: "temporary directory to store the built binary. if not specified, the system's temp directory is used",
+			},
+			&cli.StringFlag{
+				Name:  "catchall-target",
+				Usage: "target to catch all requests. if not specified, the server returns 404",
 			},
 			&cli.StringFlag{
 				Name:  "log-level",
@@ -68,8 +80,8 @@ func run(cctx *cli.Context) error {
 	if ignoreDirs := cctx.StringSlice("ignore-dir"); len(ignoreDirs) > 0 {
 		opts = append(opts, tanukiup.WithIgnoreDirs(ignoreDirs))
 	}
-	if port := cctx.String("port"); port != "" {
-		opts = append(opts, tanukiup.WithPort(port))
+	if port := cctx.String("addr"); port != "" {
+		opts = append(opts, tanukiup.WithAddr(port))
 	}
 	if logLevel := cctx.String("log-level"); logLevel != "" {
 		levelMap := map[string]slog.Level{
@@ -91,6 +103,15 @@ func run(cctx *cli.Context) error {
 	if exec := cctx.String("exec"); exec != "" {
 		ec := strings.Fields(exec)
 		opts = append(opts, tanukiup.WithExecCommand(ec))
+	}
+	if basedir := cctx.String("base-dir"); basedir != "" {
+		opts = append(opts, tanukiup.WithBaseDir(basedir))
+	}
+	if tempdir := cctx.String("temp-dir"); tempdir != "" {
+		opts = append(opts, tanukiup.WithTempDir(tempdir))
+	}
+	if catchallTarget := cctx.String("catchall-target"); catchallTarget != "" {
+		opts = append(opts, tanukiup.WithCatchAllTarget(catchallTarget))
 	}
 
 	ctx, cancel := context.WithCancel(cctx.Context)

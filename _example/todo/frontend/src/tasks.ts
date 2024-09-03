@@ -7,7 +7,7 @@ interface task {
 	description: string;
 }
 
-const client = newClient("http://localhost:8080");
+const client = newClient();
 
 export const useTasks = () => {};
 

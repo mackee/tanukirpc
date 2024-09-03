@@ -5,9 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
-	"os"
 	"os/signal"
 	"slices"
 	"strconv"
@@ -60,25 +59,13 @@ func main() {
 		r.Delete("/", tanukirpc.NewHandler(removeTaskHandler))
 	})
 
-	address := "127.0.0.1:8080"
-	log.Printf("Server started at %s", address)
-
 	genclient.AnalyzeTarget(router)
-	server := &http.Server{Addr: address, Handler: router}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-	go func() {
-		<-sig
-
-		log.Println("Server is shutting down...")
-		if err := server.Shutdown(context.Background()); err != nil {
-			log.Fatalf("Failed to shutdown server: %v", err)
-		}
-	}()
-
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatalf("Failed to start server: %v", err)
+	address := "127.0.0.1:8080"
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer stop()
+	if err := router.ListenAndServe(ctx, address); err != nil {
+		slog.ErrorContext(ctx, "Failed to start server", slog.Any("error", err))
 	}
 }
 

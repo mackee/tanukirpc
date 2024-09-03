@@ -1,8 +1,8 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"net/http"
 
 	"github.com/mackee/tanukirpc"
 )
@@ -25,7 +25,7 @@ func main() {
 	r := tanukirpc.NewRouter(struct{}{})
 	r.Get("/hello/{name}", tanukirpc.NewHandler(hello))
 
-	if err := http.ListenAndServe(":8080", r); err != nil && err != http.ErrServerClosed {
+	if err := r.ListenAndServe(context.Background(), ":8080"); err != nil {
 		fmt.Println(err)
 	}
 }
