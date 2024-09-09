@@ -48,6 +48,9 @@ var routerMethodNames = map[string]string{
 
 func run(pass *analysis.Pass) (any, error) {
 	ap := newTanukiTypeInfo(pass)
+	if ap == nil {
+		return &AnalyzerResult{}, nil
+	}
 	analyzeTargetObj := analysisutil.LookupFromImports(
 		pass.Pkg.Imports(),
 		"github.com/mackee/tanukirpc/genclient",
@@ -124,6 +127,9 @@ type tanukiTypeInfo struct {
 
 func newTanukiTypeInfo(pass *analysis.Pass) *tanukiTypeInfo {
 	routerObj := analysisutil.LookupFromImports(pass.Pkg.Imports(), "github.com/mackee/tanukirpc", "Router")
+	if routerObj == nil {
+		return nil
+	}
 	routerMethods := make(map[*types.Func]string, len(routerMethodNames))
 	for mn, method := range routerMethodNames {
 		rm := analysisutil.MethodOf(routerObj.Type(), mn)

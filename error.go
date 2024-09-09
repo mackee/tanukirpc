@@ -1,6 +1,9 @@
 package tanukirpc
 
-import "net/http"
+import (
+	"log/slog"
+	"net/http"
+)
 
 type ErrorWithStatus interface {
 	error
@@ -37,16 +40,17 @@ type ErrorBody struct {
 }
 
 type ErrorHooker interface {
-	OnError(w http.ResponseWriter, req *http.Request, codec Codec, err error)
+	OnError(w http.ResponseWriter, req *http.Request, logger *slog.Logger, codec Codec, err error)
 }
 
 type errorHooker struct{}
 
-func (e *errorHooker) OnError(w http.ResponseWriter, req *http.Request, codec Codec, err error) {
+func (e *errorHooker) OnError(w http.ResponseWriter, req *http.Request, logger *slog.Logger, codec Codec, err error) {
 	if ews, ok := err.(ErrorWithStatus); ok {
 		w.WriteHeader(ews.Status())
 	} else {
 		w.WriteHeader(http.StatusInternalServerError)
+		logger.ErrorContext(req.Context(), "ocurred internal server error", slog.Any("error", err))
 	}
 	codec.Encode(w, req, ErrorMessage{Error: ErrorBody{Message: err.Error()}})
 }

@@ -52,13 +52,14 @@ type optionArgs struct {
 	addr           string
 	tempDir        string
 	baseDir        string
+	handlerDir     string
 	catchAllTarget string
 	logLevel       slog.Level
 }
 
 func newDefaultOptionArgs() *optionArgs {
 	tempDir := os.TempDir()
-	baseDir := "."
+	baseDir := "./"
 	return &optionArgs{
 		fileExts:     defaultFileExts,
 		dirs:         defaultDirs,
@@ -67,6 +68,7 @@ func newDefaultOptionArgs() *optionArgs {
 		execCommand:  defaultExecCommand,
 		tempDir:      tempDir,
 		baseDir:      baseDir,
+		handlerDir:   baseDir,
 		logLevel:     defaultLogLevel,
 	}
 }
@@ -138,6 +140,12 @@ func WithBaseDir(baseDir string) Option {
 func WithCatchAllTarget(target string) Option {
 	return func(args *optionArgs) {
 		args.catchAllTarget = target
+	}
+}
+
+func WithHandlerDir(handlerDir string) Option {
+	return func(args *optionArgs) {
+		args.handlerDir = handlerDir
 	}
 }
 
@@ -239,11 +247,11 @@ func Run(ctx context.Context, options ...Option) error {
 	}
 
 	for _, dir := range args.dirs {
-		dir := filepath.Join(args.baseDir, dir)
 		if noRecursive := strings.TrimSuffix(dir, "..."); noRecursive != dir {
+			noRecursive = filepath.Join(args.baseDir, noRecursive)
 			stat, err := os.Stat(noRecursive)
 			if err != nil {
-				return fmt.Errorf("failed to get directory info: %w", err)
+				return fmt.Errorf("failed to get directory info: %w filepath=%s", err, noRecursive)
 			}
 			if !stat.IsDir() {
 				return fmt.Errorf("not a directory: %s", noRecursive)
@@ -343,7 +351,7 @@ func startCmd(ctx context.Context, args *optionArgs) error {
 	if args.addr != "" {
 		up := udsPath(fname, args.tempDir)
 		ecmd.Env = append(ecmd.Env, fmt.Sprintf("%s=%s", defaultTanukiupUDSPathEnv, up))
-		waitAndListenProxyServer(ctx, args.addr, args.baseDir, up, args.catchAllTarget)
+		waitAndListenProxyServer(ctx, args.addr, args.handlerDir, up, args.catchAllTarget)
 	}
 
 	if err := ecmd.Run(); err != nil {
@@ -436,9 +444,9 @@ type routePath struct {
 
 var routePathsCommand = []string{"go", "run", "github.com/mackee/tanukirpc/cmd/showpaths"}
 
-func retrievePaths(ctx context.Context, basedir string) ([]routePath, error) {
+func retrievePaths(ctx context.Context, handlerDir string) ([]routePath, error) {
 	buf := &bytes.Buffer{}
-	ecmd := exec.CommandContext(ctx, routePathsCommand[0], append(routePathsCommand[1:], basedir)...)
+	ecmd := exec.CommandContext(ctx, routePathsCommand[0], append(routePathsCommand[1:], handlerDir)...)
 	ecmd.Stdout = buf
 
 	if err := ecmd.Run(); err != nil {
@@ -543,8 +551,8 @@ func tryLaunchProxyServer(ctx context.Context, server *http.Server, udsPath stri
 	}()
 }
 
-func waitAndListenProxyServer(ctx context.Context, addr string, basedir string, up string, catchAllTarget string) {
-	rps, err := retrievePaths(ctx, basedir)
+func waitAndListenProxyServer(ctx context.Context, addr string, handlerDir string, up string, catchAllTarget string) {
+	rps, err := retrievePaths(ctx, handlerDir)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to retrieve paths", slog.Any("error", err))
 		return

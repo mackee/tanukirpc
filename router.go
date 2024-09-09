@@ -27,22 +27,9 @@ type Router[Reg any] struct {
 	defaultMiddleware []func(http.Handler) http.Handler
 }
 
-func NewRouterWithNoRegistry[Reg struct{}](opts ...RouterOption[Reg]) *Router[Reg] {
-	router := &Router[Reg]{
-		cr:                chi.NewRouter(),
-		codec:             DefaultCodecList,
-		contextFactory:    &DefaultContextFactory[Reg]{registry: struct{}{}},
-		errorHooker:       &errorHooker{},
-		logger:            NewLogger(slog.Default(), defaultLoggerKeys),
-		accessLogger:      &accessLogger{},
-		defaultMiddleware: defaultMiddleware,
-	}
-	router.apply(opts...)
-	router.Use(router.defaultMiddleware...)
-
-	return router
-}
-
+// NewRouter creates a new Router.
+//
+// The registry is used to create a context.
 func NewRouter[Reg any](reg Reg, opts ...RouterOption[Reg]) *Router[Reg] {
 	router := &Router[Reg]{
 		cr:                chi.NewRouter(),

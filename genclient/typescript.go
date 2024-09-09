@@ -39,6 +39,10 @@ func init() {
 
 func generateTypeScriptClient(pass *analysis.Pass) (any, error) {
 	result := pass.ResultOf[Analyzer].(*AnalyzerResult)
+	if len(result.RoutePaths) == 0 {
+		return &bytes.Buffer{}, nil
+	}
+
 	gen, err := newTypeScriptClientGenerator()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TypeScript client generator: %w", err)
@@ -355,6 +359,8 @@ func (t *typeScriptClientGenerator) typeNameByBasicLit(tt *types.Basic) (string,
 		types.Uint, types.Uint8, types.Uint16, types.Uint32,
 		types.Float32, types.Float64, types.Complex64, types.Complex128:
 		return "number", nil
+	case types.Bool:
+		return "boolean", nil
 
 	}
 	return "", fmt.Errorf("unsupported basic type: %s", tt.String())

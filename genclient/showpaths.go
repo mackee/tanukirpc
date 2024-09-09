@@ -20,6 +20,9 @@ var ShowPathAnalyzer = &analysis.Analyzer{
 func runShowPaths(pass *analysis.Pass) (any, error) {
 	result := pass.ResultOf[Analyzer].(*AnalyzerResult)
 	rps := result.RoutePaths
+	if len(rps) == 0 {
+		return nil, nil
+	}
 
 	rpps := make([]showPathPath, 0, len(rps))
 	for _, rp := range rps {

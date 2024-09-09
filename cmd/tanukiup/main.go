@@ -53,6 +53,10 @@ func main() {
 				Usage: "temporary directory to store the built binary. if not specified, the system's temp directory is used",
 			},
 			&cli.StringFlag{
+				Name:  "handler-dir",
+				Usage: "directory to watch for the handler files. if not specified, the base directory is used",
+			},
+			&cli.StringFlag{
 				Name:  "catchall-target",
 				Usage: "target to catch all requests. if not specified, the server returns 404",
 			},
@@ -112,6 +116,9 @@ func run(cctx *cli.Context) error {
 	}
 	if catchallTarget := cctx.String("catchall-target"); catchallTarget != "" {
 		opts = append(opts, tanukiup.WithCatchAllTarget(catchallTarget))
+	}
+	if handlerDir := cctx.String("handler-dir"); handlerDir != "" {
+		opts = append(opts, tanukiup.WithHandlerDir(handlerDir))
 	}
 
 	ctx, cancel := context.WithCancel(cctx.Context)

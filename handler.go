@@ -39,14 +39,14 @@ func (h *handler[Req, Res, Reg]) build(r *Router[Reg]) http.HandlerFunc {
 
 		var reqBody Req
 		if err := r.codec.Decode(req, &reqBody); err != nil {
-			r.errorHooker.OnError(ww, req, r.codec, err)
+			r.errorHooker.OnError(ww, req, r.logger, r.codec, err)
 			lerr = err
 			return
 		}
 		if vreq, ok := canValidate(reqBody); ok {
 			if err := vreq.Validate(); err != nil {
 				ve := &ValidateError{err: err}
-				r.errorHooker.OnError(ww, req, r.codec, ve)
+				r.errorHooker.OnError(ww, req, r.logger, r.codec, ve)
 				lerr = err
 				return
 			}
@@ -54,25 +54,25 @@ func (h *handler[Req, Res, Reg]) build(r *Router[Reg]) http.HandlerFunc {
 
 		ctx, err := r.contextFactory.Build(ww, req)
 		if err != nil {
-			r.errorHooker.OnError(ww, req, r.codec, err)
+			r.errorHooker.OnError(ww, req, r.logger, r.codec, err)
 			lerr = err
 			return
 		}
 
 		res, err := h.h(ctx, reqBody)
 		if err != nil {
-			r.errorHooker.OnError(ww, req, r.codec, err)
+			r.errorHooker.OnError(ww, req, r.logger, r.codec, err)
 			lerr = err
 			return
 		}
 
 		if err := ctx.DeferDo(DeferDoTimingBeforeResponse); err != nil {
-			r.errorHooker.OnError(ww, req, r.codec, err)
+			r.errorHooker.OnError(ww, req, r.logger, r.codec, err)
 			lerr = err
 			return
 		}
 		if err := r.codec.Encode(ww, req, res); err != nil {
-			r.errorHooker.OnError(ww, req, r.codec, err)
+			r.errorHooker.OnError(ww, req, r.logger, r.codec, err)
 			lerr = err
 			return
 		}

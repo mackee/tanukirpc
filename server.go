@@ -14,6 +14,7 @@ import (
 type listenAndServeConfig struct {
 	disableTanukiupProxy bool
 	shutdownTimeout      time.Duration
+	noSetDefaultLogger   bool
 }
 
 type ListenAndServeOption func(*listenAndServeConfig)
@@ -27,6 +28,12 @@ func WithDisableTanukiupProxy() ListenAndServeOption {
 func WithShutdownTimeout(d time.Duration) ListenAndServeOption {
 	return func(o *listenAndServeConfig) {
 		o.shutdownTimeout = d
+	}
+}
+
+func WithNoSetDefaultLogger() ListenAndServeOption {
+	return func(o *listenAndServeConfig) {
+		o.noSetDefaultLogger = true
 	}
 }
 
