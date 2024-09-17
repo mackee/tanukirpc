@@ -36,7 +36,7 @@ const apiPathBuilder = {
 
 const hasApiPathBuilder = (path: string): path is keyof typeof apiPathBuilder => path in apiPathBuilder
 type apiPathBuilderArgs<PM extends keyof apiSchemaCollection> =
-	PM extends `POST ${infer P}`
+	PM extends `${method} ${infer P}`
 		? P extends keyof typeof apiPathBuilder
 			? apiPathBuilderArgsByPath<P>
 			: never
