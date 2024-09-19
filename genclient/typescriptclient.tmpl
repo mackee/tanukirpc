@@ -8,33 +8,33 @@ type apiSchemaCollection = {
     Response: {{ .Response.RenderResponse "    " }} | { error: { message: string } }
   };
 {{- end }}
-}
+};
 
 export const isErrorResponse = (response: unknown): response is { error: { message: string } } => {
   return !!((response as { error: unknown })?.error)
-}
+};
 
 type method = keyof apiSchemaCollection extends `${infer M} ${string}` ? M : never;
-type methodPathsByMethod<M extends method> = Extract<keyof apiSchemaCollection, `${M} ${string}`>
-type pathByMethod<MP extends string> = MP extends `${method} ${infer P}` ? P : never
-type pathsByMethod<M extends method> = pathByMethod<methodPathsByMethod<M>>
+type methodPathsByMethod<M extends method> = Extract<keyof apiSchemaCollection, `${M} ${string}`>;
+type pathByMethod<MP extends string> = MP extends `${method} ${infer P}` ? P : never;
+type pathsByMethod<M extends method> = pathByMethod<methodPathsByMethod<M>>;
 
 const hasApiRequest = <PM extends keyof apiSchemaCollection>(args: unknown): args is { data: apiSchemaCollection[PM]["Request"] } => {
   return !!(args as { data: unknown })?.data
-}
+};
 
 const hasApiQuery = <PM extends keyof apiSchemaCollection>(args: unknown): args is { query: apiSchemaCollection[PM]["Query"] } => {
   return !!(args as { query: unknown })?.query
-}
+};
 
 {{- with .BuiltPaths }}
 const apiPathBuilder = {
 {{- range . }}
   {{ . }},
 {{- end }}
-} as const
+} as const;
 
-const hasApiPathBuilder = (path: string): path is keyof typeof apiPathBuilder => path in apiPathBuilder
+const hasApiPathBuilder = (path: string): path is keyof typeof apiPathBuilder => path in apiPathBuilder;
 type apiPathBuilderArgs<PM extends keyof apiSchemaCollection> =
 	PM extends `${method} ${infer P}`
 		? P extends keyof typeof apiPathBuilder
@@ -53,7 +53,7 @@ const pathBuilderByPath = <P extends keyof typeof apiPathBuilder>(
 
 const hasApiPathArgs = <PM extends keyof apiSchemaCollection>(args: unknown): args is { pathArgs: apiPathBuilderArgs<PM> } => {
   return !!(args as { pathArgs: unknown })?.pathArgs
-}
+};
 
 type pathCallArgs<PM extends keyof apiSchemaCollection> =
   apiSchemaCollection[PM]["Request"] extends undefined
@@ -107,45 +107,50 @@ type pathCallArgs<PM extends keyof apiSchemaCollection> =
         {
             data: apiSchemaCollection[PM]["Request"];
             query: apiSchemaCollection[PM]["Query"];
-        }
+        };
 {{- end }}
 
 type client = {
 {{- range .Methods }}
   {{ .Lower }}: <P extends pathsByMethod<"{{ .Upper }}">>(path: P, args: pathCallArgs<`{{ .Upper }} ${P}`>) => Promise<apiSchemaCollection[`{{ .Upper }} ${P}`]["Response"]>
 {{- end }}
-}
+};
 
 export const newClient = (baseURL = ""): client => {
   const fetchByPath = async <PM extends keyof apiSchemaCollection>(method: method, path: string, args: pathCallArgs<PM>) => {
 {{- with .BuiltPaths }}
-    const builtPath = hasApiPathBuilder(path) && hasApiPathArgs(args) ? pathBuilderByPath(path)(args.pathArgs) : path
+    const builtPath = hasApiPathBuilder(path) && hasApiPathArgs(args) ? pathBuilderByPath(path)(args.pathArgs) : path;
 {{- else }}
-    const builtPath = path
+    const builtPath = path;
 {{- end }}
-    const query = hasApiQuery(args) ? `?${new URLSearchParams(args.query).toString()}` : ""
-    const body = hasApiRequest(args) ? JSON.stringify(args.data) : undefined
+    const query = hasApiQuery(args) ? `?${new URLSearchParams(args.query).toString()}` : "";
+    const body = hasApiRequest(args) ? JSON.stringify(args.data) : undefined;
     const response = await fetch(baseURL + builtPath + query, {
       method,
       headers: {
         "Content-Type": "application/json",
       },
       body,
-    })
+    });
 
     if (!response.ok) {
-      throw new Error(response.statusText)
+      try {
+        const error = await response.json();
+        return error;
+      } catch (e) {
+        throw new Error(response.statusText);
+      }
     }
-    return response.json() as Promise<apiSchemaCollection[PM]["Response"]>
+    return response.json() as Promise<apiSchemaCollection[PM]["Response"]>;
   }
 
 {{- range .Methods }}
-  const {{ .LowerVar }} = async <P extends pathsByMethod<"{{ .Upper }}">>(path: P, args: pathCallArgs<`{{ .Upper }} ${P}`>) => await fetchByPath("{{ .Upper }}", path, args)
+  const {{ .LowerVar }} = async <P extends pathsByMethod<"{{ .Upper }}">>(path: P, args: pathCallArgs<`{{ .Upper }} ${P}`>) => await fetchByPath("{{ .Upper }}", path, args);
 {{- end }}
 
   return {
 {{- range .Methods }}
     {{ .LowerReturn }},
 {{- end }}
-  }
-}
+  };
+};
