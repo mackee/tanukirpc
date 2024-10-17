@@ -81,6 +81,8 @@ Additionally, Registry can be generated for each request. For more details, plea
 * Query String: use the `query` struct tag
 * JSON (`application/json`): use the `json` struct tag
 * Form (`application/x-www-form-urlencoded`): use the `form` struct tag
+* Raw Body: use the `rawbody` struct tag with []byte or io.ReadCloser
+  * also support naked []byte or io.ReadCloser
 
 If you want to use other bindings, you can implement the `tanukirpc.Codec` interface and specify it using the `tanukirpc.WithCodec` option when initializing the router.
 
@@ -103,6 +105,26 @@ If you want to use custom validation, you can implement the `tanukirpc.Validatab
 ### Error handling
 
 `tanukirpc` has a default error handler. If you want to use custom error handling, you can implement the `tanukirpc.ErrorHooker` interface and use this with the `tanukirpc.WithErrorHooker` option when initializing the router.
+
+#### Response with Status Code
+
+If you want to return a response with a specific status code, you can use the `tanukirpc.WrapErrorWithStatus`.
+
+```go
+// this handler returns a 404 status code
+func notFoundHandler(ctx tanukirpc.Context[struct{}], struct{}) (*struct{}, error) {
+    return nil, tanukirpc.WrapErrorWithStatus(http.StatusNotFound, errors.New("not found"))
+}
+```
+
+Also, you can use the `tanukirpc.ErrorRedirectTo` function. This function returns a response with a 3xx status code and a `Location` header.
+
+```go
+// this handler returns a 301 status code
+func redirectHandler(ctx tanukirpc.Context[struct{}], struct{}) (*struct{}, error) {
+    return nil, tanukirpc.ErrorRedirectTo(http.StatusMovedPermanently, "/new-location")
+}
+```
 
 ### Middleware
 

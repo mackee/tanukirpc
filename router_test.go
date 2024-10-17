@@ -3,9 +3,11 @@ package tanukirpc_test
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -32,7 +34,11 @@ func (tc testCase) assert(t *testing.T) {
 	tc.request.URL.Scheme = su.Scheme
 	tc.request.URL.Host = su.Host
 
-	resp, err := server.Client().Do(tc.request)
+	client := server.Client()
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	resp, err := client.Do(tc.request)
 	tc.expect(t, resp, err)
 }
 
@@ -64,6 +70,36 @@ func TestRouter(t *testing.T) {
 			router:  newDeferDoHandler(store),
 			request: newDeferDoHandlerRequest(t),
 			expect:  deferDoHandlerExpect(store),
+		},
+		{
+			name:    "raw body codec handler",
+			router:  rawBodyCodecHandler(),
+			request: rawBodyCodecHandlerRequest(t),
+			expect:  rawBodyCodecHandlerExpect,
+		},
+		{
+			name:    "raw body codec field reader handler",
+			router:  rawBodyCodecFieldReaderHandler(),
+			request: rawBodyCodecHandlerRequest(t),
+			expect:  rawBodyCodecHandlerExpect,
+		},
+		{
+			name:    "raw body codec reader handler",
+			router:  rawBodyCodecReaderHandler(),
+			request: rawBodyCodecHandlerRequest(t),
+			expect:  rawBodyCodecHandlerExpect,
+		},
+		{
+			name:    "raw body codec bytes handler",
+			router:  rawBodyCodecBytesHandler(),
+			request: rawBodyCodecHandlerRequest(t),
+			expect:  rawBodyCodecHandlerExpect,
+		},
+		{
+			name:    "error redirect handler",
+			router:  errorRedirectHandler(),
+			request: errorRedirectHandlerRequest(t),
+			expect:  errorRedirectHandlerExpect,
 		},
 	}
 	for _, testCase := range testCases {
@@ -211,4 +247,101 @@ func deferDoHandlerExpect(store map[string]string) func(t *testing.T, resp *http
 		assert.Equal(t, "ok", store["beforeResponseDefer"])
 		assert.Equal(t, "okok", store["afterResponseDefer"])
 	}
+}
+
+func rawBodyCodecHandler() http.Handler {
+	type rawBodyRequest struct {
+		Body []byte `rawbody:"true"`
+	}
+	h := func(ctx tanukirpc.Context[struct{}], req rawBodyRequest) ([]byte, error) {
+		name := string(req.Body)
+		return []byte("hello, " + name), nil
+	}
+	router := tanukirpc.NewRouter(struct{}{})
+	router.Post("/raw", tanukirpc.NewHandler(h))
+
+	return router
+}
+
+func rawBodyCodecHandlerRequest(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, "/raw", strings.NewReader("world"))
+	require.NoError(t, err)
+	return req
+}
+
+func rawBodyCodecHandlerExpect(t *testing.T, resp *http.Response, err error) {
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, "hello, world", string(body))
+}
+
+func rawBodyCodecFieldReaderHandler() http.Handler {
+	type rawBodyRequest struct {
+		Body io.ReadCloser `rawbody:"true"`
+	}
+	h := func(ctx tanukirpc.Context[struct{}], req rawBodyRequest) ([]byte, error) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		return append([]byte("hello, "), body...), nil
+	}
+	router := tanukirpc.NewRouter(struct{}{})
+	router.Post("/raw", tanukirpc.NewHandler(h))
+
+	return router
+}
+
+func rawBodyCodecReaderHandler() http.Handler {
+	h := func(ctx tanukirpc.Context[struct{}], req io.ReadCloser) ([]byte, error) {
+		body, err := io.ReadAll(req)
+		if err != nil {
+			return nil, err
+		}
+		return append([]byte("hello, "), body...), nil
+	}
+	router := tanukirpc.NewRouter(struct{}{})
+	router.Post("/raw", tanukirpc.NewHandler(h))
+
+	return router
+}
+
+func rawBodyCodecBytesHandler() http.Handler {
+	h := func(ctx tanukirpc.Context[struct{}], req []byte) (io.Reader, error) {
+		resp := append([]byte("hello, "), req...)
+		return strings.NewReader(string(resp)), nil
+	}
+	router := tanukirpc.NewRouter(struct{}{})
+	router.Post("/raw", tanukirpc.NewHandler(h))
+
+	return router
+}
+
+func errorRedirectHandler() http.Handler {
+	h := func(ctx tanukirpc.Context[struct{}], req struct{}) (struct{}, error) {
+		return struct{}{}, tanukirpc.ErrorRedirectTo(http.StatusFound, "https://example.com")
+	}
+	router := tanukirpc.NewRouter(struct{}{})
+	router.Get("/redirect", tanukirpc.NewHandler(h))
+
+	return router
+}
+
+func errorRedirectHandlerRequest(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "/redirect", nil)
+	require.NoError(t, err)
+	return req
+}
+
+func errorRedirectHandlerExpect(t *testing.T, resp *http.Response, err error) {
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, "https://example.com", resp.Header.Get("Location"))
 }

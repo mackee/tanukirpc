@@ -62,7 +62,7 @@ func hasValidateTag(req any) bool {
 		if ftt.Kind() == reflect.Pointer {
 			ftt = ftt.Elem()
 		}
-		if ftt.Kind() == reflect.Struct {
+		if ftt.Kind() == reflect.Struct && ft.IsExported() {
 			if hasValidateTag(fv.Interface()) {
 				return true
 			}
