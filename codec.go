@@ -16,13 +16,15 @@ import (
 )
 
 var (
-	ErrRequestNotSupportedAtThisCodec = errors.New("request not supported at this codec")
-	ErrRequestContinueDecode          = errors.New("request continue decode")
-	DefaultCodecList                  = CodecList{
+	ErrRequestNotSupportedAtThisCodec  = errors.New("request not supported at this codec")
+	ErrRequestContinueDecode           = errors.New("request continue decode")
+	ErrResponseNotSupportedAtThisCodec = errors.New("response not supported at this codec")
+	DefaultCodecList                   = CodecList{
 		NewURLParamCodec(),
 		NewQueryCodec(),
 		NewFormCodec(),
 		NewJSONCodec(),
+		NewRawBodyCodec(),
 		&nopCodec{},
 	}
 )
@@ -122,12 +124,12 @@ func (c *codec) Decode(r *http.Request, v any) error {
 
 func (c *codec) Encode(w http.ResponseWriter, r *http.Request, v any) error {
 	if c.encoderFunc == nil {
-		return ErrRequestNotSupportedAtThisCodec
+		return ErrResponseNotSupportedAtThisCodec
 	}
 
 	accept := r.Header.Get("accept")
 	if !slices.Contains(c.acceptTypes, accept) {
-		return ErrRequestNotSupportedAtThisCodec
+		return ErrResponseNotSupportedAtThisCodec
 	}
 
 	w.Header().Set("content-type", c.responseContentType)
@@ -203,7 +205,7 @@ func (c CodecList) Encode(w http.ResponseWriter, r *http.Request, v any) error {
 	for _, codec := range c {
 		if err := codec.Encode(w, r, v); err == nil {
 			break
-		} else if errors.Is(err, ErrRequestNotSupportedAtThisCodec) {
+		} else if errors.Is(err, ErrResponseNotSupportedAtThisCodec) {
 			continue
 		} else {
 			return fmt.Errorf("encode error in CodecList: %w, codec=%s", err, codec.Name())
@@ -230,7 +232,7 @@ func (c *urlParamCodec) Decode(r *http.Request, v any) error {
 		vr = vr.Elem()
 	}
 	if vr.Kind() != reflect.Struct {
-		return errors.New("v must be a pointer to a struct")
+		return ErrRequestNotSupportedAtThisCodec
 	}
 	str := vr.Type()
 	for i := 0; i < vr.NumField(); i++ {
@@ -292,7 +294,7 @@ func (c *urlParamCodec) Decode(r *http.Request, v any) error {
 }
 
 func (c *urlParamCodec) Encode(w http.ResponseWriter, r *http.Request, v any) error {
-	return ErrRequestNotSupportedAtThisCodec
+	return ErrResponseNotSupportedAtThisCodec
 }
 
 type queryCodec struct{}
@@ -316,7 +318,7 @@ func (c *queryCodec) Decode(r *http.Request, v any) error {
 }
 
 func (c *queryCodec) Encode(w http.ResponseWriter, r *http.Request, v any) error {
-	return ErrRequestNotSupportedAtThisCodec
+	return ErrResponseNotSupportedAtThisCodec
 }
 
 type renderDecoder struct {
@@ -326,4 +328,90 @@ type renderDecoder struct {
 
 func (r *renderDecoder) Decode(v any) error {
 	return r.rd(r.r, v)
+}
+
+// RawBodyCodec is a codec that reads the request body as is.
+type RawBodyCodec struct{}
+
+func NewRawBodyCodec() *RawBodyCodec {
+	return &RawBodyCodec{}
+}
+
+func (r *RawBodyCodec) Name() string { return "rawbody" }
+
+func (r *RawBodyCodec) assignableToReadCloser(t reflect.Type) bool {
+	return t.AssignableTo(reflect.TypeOf((*io.ReadCloser)(nil)).Elem())
+}
+
+func (r *RawBodyCodec) Decode(req *http.Request, v any) error {
+	vr := reflect.ValueOf(v)
+	var target reflect.Value
+	if vr.Kind() == reflect.Pointer && !r.assignableToReadCloser(vr.Type()) {
+		vr = vr.Elem()
+	}
+	var fieldName string
+	switch vr.Kind() {
+	case reflect.Struct:
+		str := vr.Type()
+		for i := 0; i < vr.NumField(); i++ {
+			ft := str.Field(i)
+			field := vr.Field(i)
+			if _, ok := ft.Tag.Lookup("rawbody"); !ok {
+				continue
+			}
+			target = field
+			fieldName = ft.Name
+		}
+	case reflect.Slice:
+		if vr.Type().Elem().Kind() == reflect.Uint8 {
+			target = vr
+		}
+	default:
+		if r.assignableToReadCloser(vr.Type()) {
+			target = vr
+		}
+	}
+	if !target.IsValid() {
+		return ErrRequestNotSupportedAtThisCodec
+	}
+
+	tt := target.Type()
+	if tt.Kind() == reflect.Slice && tt.Elem().Kind() == reflect.Uint8 {
+		bs, err := io.ReadAll(req.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read body: %w", err)
+		}
+		target.Set(reflect.ValueOf(bs))
+		if err := req.Body.Close(); err != nil {
+			return nil
+		}
+	} else if r.assignableToReadCloser(tt) {
+		target.Set(reflect.ValueOf(req.Body))
+	} else {
+		return fmt.Errorf("unsupported type %s for field %s", target.Type().Name(), fieldName)
+	}
+
+	return nil
+}
+
+func (r *RawBodyCodec) Encode(w http.ResponseWriter, req *http.Request, v any) error {
+	vr := reflect.ValueOf(v)
+	if vr.Kind() == reflect.Slice && vr.Type().Elem().Kind() == reflect.Uint8 {
+		if _, err := w.Write(vr.Bytes()); err != nil {
+			return fmt.Errorf("failed to write body: %w", err)
+		}
+		return nil
+	}
+	if r, ok := vr.Interface().(io.Reader); ok {
+		if _, err := io.Copy(w, r); err != nil {
+			return fmt.Errorf("failed to write body: %w", err)
+		}
+		if closer, ok := vr.Interface().(io.Closer); ok {
+			if err := closer.Close(); err != nil {
+				return fmt.Errorf("failed to close body: %w", err)
+			}
+		}
+	}
+
+	return ErrResponseNotSupportedAtThisCodec
 }
