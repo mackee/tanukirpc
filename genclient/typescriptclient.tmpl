@@ -116,7 +116,9 @@ type client = {
 {{- end }}
 };
 
-export const newClient = (baseURL = ""): client => {
+type myFetcher = (input: string, init: { method: string; headers: Record<string, string>; body: string | undefined; }) => Promise<Response>;
+
+export const newClient = (baseURL = "", myFetch: myFetcher = fetch): client => {
   const fetchByPath = async <PM extends keyof apiSchemaCollection>(method: method, path: string, args: pathCallArgs<PM>) => {
 {{- with .BuiltPaths }}
     const builtPath = hasApiPathBuilder(path) && hasApiPathArgs(args) ? pathBuilderByPath(path)(args.pathArgs) : path;
@@ -125,7 +127,7 @@ export const newClient = (baseURL = ""): client => {
 {{- end }}
     const query = hasApiQuery(args) ? `?${new URLSearchParams(args.query).toString()}` : "";
     const body = hasApiRequest(args) ? JSON.stringify(args.data) : undefined;
-    const response = await fetch(baseURL + builtPath + query, {
+    const response = await myFetch(baseURL + builtPath + query, {
       method,
       headers: {
         "Content-Type": "application/json",
