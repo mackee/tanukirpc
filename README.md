@@ -59,6 +59,9 @@ func main() {
 - :o: Generate TypeScript client code
   - use `gentypescript` command
 - :o: defer hooks for cleanup
+- :o: Session management
+- :o: Authentication flow
+  - :o: OpenID Connect
 
 ### Registry injection
 
@@ -181,6 +184,79 @@ func (ctx *tanukirpc.Context[struct{}], struct{}) (*struct{}, error) {
     })
     return &struct{}{}, nil
 }
+```
+
+### Session Management
+
+`tanukirpc` provides convenient utilities for session management. You can use the `gorilla/sessions` package or other session management libraries.
+
+To get started, create a session store and wrap it using `tanukirpc/auth/gorilla.NewStore`.
+```go
+import (
+    "github.com/gorilla/sessions"
+    "github.com/mackee/tanukirpc/sessions/gorilla"
+    tsessions "github.com/mackee/tanukirpc/sessions"
+)
+
+func newStore(secrets []byte) (tsessions.Store, error) {
+    sessionStore := sessions.NewCookieStore(secrets)
+    store, err := gorilla.NewStore(sessionStore)
+    if err != nil {
+        return nil, err
+    }
+    return store, nil
+}
+```
+
+In `RegistryFactory`, you can create a session using the `tanukirpc/sessions.Store`.
+
+```go
+type RegistryFactory struct {
+    Store tsessions.Store
+}
+
+type Registry struct {
+    sessionAccessor tsessions.Accessor
+}
+
+func (r *RegistryFactory) NewRegistry(w http.ResponseWriter, req *http.Request) (*Registry, error) {
+	accessor, err := r.Store.GetAccessor(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session accessor: %w", err)
+	}
+
+    return &Registry{
+        sessionAccessor: accessor,
+    }, nil
+}
+
+func (r *Registry) Session() tsessions.Accessor {
+    return r.sessionAccessor
+}
+```
+
+The `Registry` type implements the `tanukirpc/sessions.RegistryWithAccessor` interface.
+
+### Authentication Flow
+
+`tanukirpc` supports the OpenID Connect authentication flow. You can use the `tanukirpc/auth/oidc.NewHandlers` function to create handlers for this flow, which includes a set of handlers to facilitate user authentication.
+
+#### Requirements
+
+`tanukirpc/auth/oidc.Handlers` requires a `Registry` that implements the `tanukirpc/sessions.RegistryWithAccessor` interface. For more details, refer to the [Session Management](#session-management) section.
+
+#### Usage
+
+```go
+oidcAuth := oidc.NewHandlers(
+    oauth2Config, // *golang.org/x/oauth2.Config
+    provider,     // *github.com/coreos/go-oidc/v3/oidc.Provider
+)
+router.Route("/auth", func(router *tanukirpc.Router[*Registry]) {
+    router.Get("/redirect", tanukirpc.NewHandler(oidcAuth.Redirect))
+    router.Get("/callback", tanukirpc.NewHandler(oidcAuth.Callback))
+    router.Get("/logout", tanukirpc.NewHandler(oidcAuth.Logout))
+})
 ```
 
 ## License
