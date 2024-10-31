@@ -1,16 +1,22 @@
 module github.com/mackee/tanukirpc
 
-go 1.22.4
+go 1.23
+
+toolchain go1.23.2
 
 require (
+	github.com/coreos/go-oidc/v3 v3.11.0
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/go-chi/render v1.0.3
 	github.com/go-playground/validator/v10 v10.22.0
+	github.com/google/uuid v1.6.0
+	github.com/gorilla/sessions v1.4.0
 	github.com/gostaticanalysis/analysisutil v0.7.1
 	github.com/hetiansu5/urlquery v1.2.7
 	github.com/stretchr/testify v1.9.0
 	github.com/urfave/cli/v2 v2.27.4
+	golang.org/x/oauth2 v0.23.0
 	golang.org/x/tools v0.23.0
 )
 
@@ -19,8 +25,10 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.4 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
+	github.com/go-jose/go-jose/v4 v4.0.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/gostaticanalysis/comment v1.4.2 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
