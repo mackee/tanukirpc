@@ -350,7 +350,7 @@ func startCmd(ctx context.Context, args *optionArgs) error {
 	ecmd.Stderr = os.Stderr
 	if args.addr != "" {
 		up := udsPath(fname, args.tempDir)
-		ecmd.Env = append(ecmd.Env, fmt.Sprintf("%s=%s", defaultTanukiupUDSPathEnv, up))
+		ecmd.Env = append(os.Environ(), fmt.Sprintf("%s=%s", defaultTanukiupUDSPathEnv, up))
 		waitAndListenProxyServer(ctx, args.addr, args.handlerDir, up, args.catchAllTarget)
 	}
 
