@@ -425,7 +425,7 @@ func searchGenerate(ctx context.Context, filename string) error {
 			if len(fields) < 4 {
 				continue
 			}
-			if _, ok := whitelistGenerate[fields[3]]; !ok {
+			if _, ok := whitelistGenerate[strings.Join(fields[2:4], " ")]; !ok {
 				continue
 			}
 			enableGenerator(ctx, &generatorInfo{
