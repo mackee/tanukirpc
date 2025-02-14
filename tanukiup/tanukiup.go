@@ -39,7 +39,8 @@ var (
 	defaultBuildCommand = []string{"go", "build", "-o", "{outpath}", "./"}
 	defaultExecCommand  = []string{"{outpath}"}
 	whitelistGenerate   = map[string]struct{}{
-		"github.com/mackee/tanukirpc/cmd/gentypescript": {},
+		"run github.com/mackee/tanukirpc/cmd/gentypescript": {},
+		"tool gentypescript": {},
 	}
 )
 
@@ -419,7 +420,7 @@ func searchGenerate(ctx context.Context, filename string) error {
 		default:
 		}
 		line := scanner.Text()
-		if strings.HasPrefix(line, "//go:generate go run ") {
+		if strings.HasPrefix(line, "//go:generate go ") {
 			fields := strings.Fields(line)
 			if len(fields) < 4 {
 				continue
