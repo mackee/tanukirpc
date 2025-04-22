@@ -69,6 +69,29 @@ Registry injection is unique feature of `tanukirpc`. You can inject a registry o
 
 Additionally, Registry can be generated for each request. For more details, please refer to [_example/simple-registry](./_example/simple-registry).
 
+You can also define a cleanup function for the registry created by the factory. The `NewContextHookFactory` function accepts an optional `closer` function (`func(ctx Context[Reg]) error`). This function is automatically registered using `ctx.Defer` and executed after the handler finishes, making it suitable for releasing resources associated with the per-request registry.
+
+```go
+// Example: Define a closer function when creating the factory
+factory := tanukirpc.NewContextHookFactory(
+    func(w http.ResponseWriter, req *http.Request) (*MyRegistry, error) {
+        // ... create registry ...
+        dbConn, err := connectToDB() // Example: Get a DB connection
+        if err != nil {
+            return nil, err
+        }
+        registry := &MyRegistry{db: dbConn}
+        return registry, nil
+    },
+    func(ctx tanukirpc.Context[*MyRegistry]) error {
+        // This function will be called after the handler
+        registry := ctx.Registry()
+        return registry.db.Close() // Example: Close the DB connection
+    },
+)
+r := tanukirpc.NewRouterWithFactory(factory)
+```
+
 #### Use case
 
 * Database connection

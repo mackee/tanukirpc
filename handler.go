@@ -71,6 +71,7 @@ func (h *handler[Req, Res, Reg]) build(r *Router[Reg]) http.HandlerFunc {
 			lerr = err
 			return
 		}
+
 		if ww.Status() == 0 {
 			if err := r.codec.Encode(ww, req, res); err != nil {
 				r.errorHooker.OnError(ww, req, r.logger, r.codec, err)

@@ -80,10 +80,14 @@ func (c *context[Reg]) DeferDo(timing DeferDoTiming) error {
 }
 
 type contextHookFactory[Reg any] struct {
-	fn func(w http.ResponseWriter, req *http.Request) (Reg, error)
+	fn     func(w http.ResponseWriter, req *http.Request) (Reg, error)
+	closer []func(ctx Context[Reg]) error
 }
 
-func NewContextHookFactory[Reg any](fn func(w http.ResponseWriter, req *http.Request) (Reg, error)) ContextFactory[Reg] {
+func NewContextHookFactory[Reg any](fn func(w http.ResponseWriter, req *http.Request) (Reg, error), closer ...func(ctx Context[Reg]) error) ContextFactory[Reg] {
+	if len(closer) > 0 {
+		return &contextHookFactory[Reg]{fn: fn, closer: closer}
+	}
 	return &contextHookFactory[Reg]{fn: fn}
 }
 
@@ -92,13 +96,19 @@ func (c *contextHookFactory[Reg]) Build(w http.ResponseWriter, req *http.Request
 	if err != nil {
 		return nil, err
 	}
-
-	return &context[Reg]{
+	ctx := &context[Reg]{
 		Context:  req.Context(),
 		req:      req,
 		res:      w,
 		registry: registry,
-	}, nil
+	}
+	for _, closer := range c.closer {
+		ctx.Defer(func() error {
+			return closer(ctx)
+		})
+	}
+
+	return ctx, nil
 }
 
 type Transformer[Reg1 any, Reg2 any] interface {
