@@ -16,6 +16,7 @@ This is a simple example of how to use `tanukirpc`.
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -58,18 +59,18 @@ func main() {
   - use `tanukiup` command
 - :o: Generate TypeScript client code
   - use `gentypescript` command
-- :o: defer hooks for cleanup
+- :o: defer hooks for cleanup (works correctly with Context Transformation)
 - :o: Session management
 - :o: Authentication flow
   - :o: OpenID Connect
 
-### Registry injection
+### Registry injection and Context Transformation
 
-Registry injection is unique feature of `tanukirpc`. You can inject a registry object to the handler function.
+Registry injection is a unique feature of `tanukirpc`. You can inject a registry object into the handler function via the `Context`.
 
-Additionally, Registry can be generated for each request. For more details, please refer to [_example/simple-registry](./_example/simple-registry).
+A `ContextFactory` can generate a `Context` (and its associated `Registry`) for each request. For more details, please refer to [_example/simple-registry](./_example/simple-registry).
 
-You can also define a cleanup function for the registry created by the factory. The `NewContextHookFactory` function accepts an optional `closer` function (`func(ctx Context[Reg]) error`). This function is automatically registered using `ctx.Defer` and executed after the handler finishes, making it suitable for releasing resources associated with the per-request registry.
+You can define a cleanup function for the registry created by the factory. The `NewContextHookFactory` function accepts an optional `closer` function (`func(ctx Context[Reg]) error`). This function is automatically registered using `ctx.Defer` and executed after the handler finishes, making it suitable for releasing resources associated with the per-request registry.
 
 ```go
 // Example: Define a closer function when creating the factory
@@ -89,14 +90,53 @@ factory := tanukirpc.NewContextHookFactory(
         return registry.db.Close() // Example: Close the DB connection
     },
 )
-r := tanukirpc.NewRouterWithFactory(factory)
+// Use WithContextFactory option
+r := tanukirpc.NewRouter(struct{}{}, tanukirpc.WithContextFactory(factory))
+```
+
+Furthermore, `tanukirpc` allows composing contexts using `RouteWithTransformer`. This function takes an existing router (`*Router[Reg1]`), a `Transformer[Reg1, Reg2]`, a route pattern, and a function to define routes within the transformed context (`func(r *Router[Reg2])`). It also accepts optional `closer` functions (`func(ctx Context[Reg2]) error`) specific to the transformed context.
+
+This enables creating nested routing structures where inner routes operate with a different registry (`Reg2`) derived from the outer registry (`Reg1`). The transformer defines how to get `Reg2` from `Context[Reg1]`. Importantly, `Defer` calls registered in the outer context (`Context[Reg1]`) are correctly executed even when the request is handled within the inner, transformed context (`Context[Reg2]`). The `closer` functions provided to `RouteWithTransformer` are executed after the inner handlers complete, allowing for resource cleanup specific to the transformed context.
+
+```go
+// Example: Using RouteWithTransformer
+type OuterRegistry struct { /* ... */ }
+type InnerRegistry struct { /* ... derived from OuterRegistry */ }
+
+// Define how to transform OuterRegistry context to InnerRegistry
+transformer := tanukirpc.NewTransformer(func(ctx tanukirpc.Context[*OuterRegistry]) (*InnerRegistry, error) {
+    // ... logic to create InnerRegistry from ctx.Registry() ...
+    innerReg := &InnerRegistry{ /* ... */ }
+    // Register a defer function in the *outer* context if needed
+    ctx.Defer(func() error { fmt.Println("Outer context defer"); return nil })
+    return innerReg, nil
+})
+
+// Define a closer for the inner context
+innerCloser := func(ctx tanukirpc.Context[*InnerRegistry]) error {
+    fmt.Println("Closing inner context resources")
+    // ... cleanup for InnerRegistry ...
+    return nil
+}
+
+outerRouter := tanukirpc.NewRouter(&OuterRegistry{})
+
+// Create nested routes with a transformed context
+tanukirpc.RouteWithTransformer(outerRouter, transformer, "/inner", func(innerRouter *tanukirpc.Router[*InnerRegistry]) {
+    innerRouter.Get("/data", tanukirpc.NewHandler(func(ctx tanukirpc.Context[*InnerRegistry], req struct{}) (*struct{}, error) {
+        // Handler uses InnerRegistry via ctx.Registry()
+        ctx.Defer(func() error { fmt.Println("Inner context defer"); return nil }) // Defer in inner context
+        fmt.Println("Handling request with inner context")
+        return &struct{}{}, nil
+    }))
+}, innerCloser) // Pass the closer for the inner context
 ```
 
 #### Use case
 
-* Database connection
-* Logger
-* Authentication information
+* Database connection management (per-request or shared)
+* Logger configuration per route group
+* Authentication/Authorization context layering
 * Resource binding by path parameter. Examples can be found in [_example/todo](./_example/todo).
 
 ### Request binding
@@ -198,14 +238,32 @@ For more detailed usage, refer to the [_example/todo](./_example/todo) directory
 
 ### Defer hooks
 
-`tanukirpc` supports defer hooks for cleanup. You can register a function to be called after the handler function has been executed.
+`tanukirpc` supports defer hooks for cleanup. You can register a function using `ctx.Defer` to be called after the handler function has been executed. These hooks are executed in LIFO (Last-In, First-Out) order.
+
+`Defer` supports two timings:
+*   `DeferDoTimingAfterResponse` (default): Executes after the response has been written. Suitable for cleanup tasks like closing connections or logging.
+*   `DeferDoTimingBeforeResponse`: Executes before the response is written. Useful for modifying headers or performing actions just before sending the response.
+
+Deferred functions work correctly even when using `RouteWithTransformer`. Functions deferred in an outer context will execute after functions deferred in an inner context (respecting LIFO order across context boundaries).
 
 ```go
-func (ctx *tanukirpc.Context[struct{}], struct{}) (*struct{}, error) {
+func myHandler(ctx tanukirpc.Context[struct{}], req myRequest) (*myResponse, error) {
+    // This will run after the response is sent (default)
     ctx.Defer(func() error {
+        fmt.Println("Cleanup after response")
         // Close the database connection, release resources, logging, enqueue job etc...
+        return nil
     })
-    return &struct{}{}, nil
+
+    // This will run just before the response is sent
+    ctx.Defer(func() error {
+        fmt.Println("Action before response")
+        ctx.Response().Header().Set("X-Custom-Header", "value")
+        return nil
+    }, tanukirpc.DeferDoTimingBeforeResponse)
+
+    fmt.Println("Handler logic executing...")
+    return &myResponse{Data: "Success"}, nil
 }
 ```
 
