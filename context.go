@@ -127,19 +127,46 @@ func (t *transformer[Reg1, Reg2]) Transform(ctx Context[Reg1]) (Reg2, error) {
 	return t.fn(ctx)
 }
 
-func compositionContextHooker[Reg1 any, Reg2 any](factory ContextFactory[Reg1], transformer Transformer[Reg1, Reg2]) ContextFactory[Reg2] {
-	return NewContextHookFactory(func(w http.ResponseWriter, req *http.Request) (Reg2, error) {
-		var zeroReg2 Reg2
-		ctx1, err := factory.Build(w, req)
-		if err != nil {
-			return zeroReg2, err
-		}
-		reg2, err := transformer.Transform(ctx1)
-		if err != nil {
-			return zeroReg2, err
-		}
-		return reg2, nil
-	})
+func compositionContextHooker[Reg1 any, Reg2 any](factory ContextFactory[Reg1], transformer Transformer[Reg1, Reg2], closer ...func(ctx Context[Reg2]) error) ContextFactory[Reg2] {
+	return &transformerContextHookFactory[Reg1, Reg2]{transformer: transformer, factory: factory, closer: closer}
+}
+
+type transformerContextHookFactory[Reg1 any, Reg2 any] struct {
+	transformer Transformer[Reg1, Reg2]
+	factory     ContextFactory[Reg1]
+	closer      []func(ctx Context[Reg2]) error
+}
+
+func (c *transformerContextHookFactory[Reg1, Reg2]) Build(w http.ResponseWriter, req *http.Request) (Context[Reg2], error) {
+	ctx1, err := c.factory.Build(w, req)
+	if err != nil {
+		return nil, err
+	}
+	reg2, err := c.transformer.Transform(ctx1)
+	if err != nil {
+		return nil, err
+	}
+	ctx2 := &context[Reg2]{
+		Context:  req.Context(),
+		req:      req,
+		res:      w,
+		registry: reg2,
+	}
+	ctx2.Defer(
+		func() error { return ctx1.DeferDo(DeferDoTimingBeforeResponse) },
+		DeferDoTimingBeforeResponse,
+	)
+	ctx2.Defer(
+		func() error { return ctx1.DeferDo(DeferDoTimingAfterResponse) },
+		DeferDoTimingAfterResponse,
+	)
+	for _, closer := range c.closer {
+		ctx2.Defer(func() error {
+			return closer(ctx2)
+		})
+	}
+
+	return ctx2, nil
 }
 
 type DeferFunc func() error

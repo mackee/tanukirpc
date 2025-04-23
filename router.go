@@ -136,9 +136,9 @@ func (r *Router[Reg]) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.cr.ServeHTTP(w, req)
 }
 
-func RouteWithTransformer[Reg1 any, Reg2 any](r *Router[Reg1], tr Transformer[Reg1, Reg2], pattern string, fn func(r *Router[Reg2])) *Router[Reg1] {
+func RouteWithTransformer[Reg1 any, Reg2 any](r *Router[Reg1], tr Transformer[Reg1, Reg2], pattern string, fn func(r *Router[Reg2]), closer ...func(Context[Reg2]) error) *Router[Reg1] {
 	return r.Route(pattern, func(r *Router[Reg1]) {
-		cf := compositionContextHooker(r.contextFactory, tr)
+		cf := compositionContextHooker(r.contextFactory, tr, closer...)
 		r2 := &Router[Reg2]{
 			cr:             r.cr,
 			codec:          r.codec,

@@ -342,7 +342,7 @@ func (i *instrs) tryRouteWithTransformer(pass *analysis.Pass, instr ssa.Instruct
 		return nil
 	}
 	args := call.Call.Args
-	if len(args) != 4 {
+	if len(args) != 5 {
 		pass.Reportf(call.Pos(), "invalid number of arguments")
 		return nil
 	}
