@@ -60,6 +60,12 @@ func (h *handler[Req, Res, Reg]) build(r *Router[Reg]) http.HandlerFunc {
 		}
 
 		res, err := h.h(ctx, reqBody)
+		if err := ctx.DeferDo(DeferDoTimingBeforeCheckError); err != nil {
+			r.errorHooker.OnError(ww, req, r.logger, r.codec, err)
+			lerr = err
+			return
+		}
+		slog.InfoContext(ctx, "request completed")
 		if err != nil {
 			r.errorHooker.OnError(ww, req, r.logger, r.codec, err)
 			lerr = err

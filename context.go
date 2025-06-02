@@ -153,6 +153,10 @@ func (c *transformerContextHookFactory[Reg1, Reg2]) Build(w http.ResponseWriter,
 		registry: reg2,
 	}
 	ctx2.Defer(
+		func() error { return ctx1.DeferDo(DeferDoTimingBeforeCheckError) },
+		DeferDoTimingBeforeCheckError,
+	)
+	ctx2.Defer(
 		func() error { return ctx1.DeferDo(DeferDoTimingBeforeResponse) },
 		DeferDoTimingBeforeResponse,
 	)
@@ -163,7 +167,7 @@ func (c *transformerContextHookFactory[Reg1, Reg2]) Build(w http.ResponseWriter,
 	for _, closer := range c.closer {
 		ctx2.Defer(func() error {
 			return closer(ctx2)
-		})
+		}, DeferDoTimingBeforeCheckError)
 	}
 
 	return ctx2, nil
@@ -222,6 +226,7 @@ type DeferDoTiming int
 const (
 	DeferDoTimingBeforeResponse DeferDoTiming = iota
 	DeferDoTimingAfterResponse
+	DeferDoTimingBeforeCheckError
 )
 
 type deferStackMap map[DeferDoTiming]*deferStack
