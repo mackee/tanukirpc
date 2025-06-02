@@ -72,6 +72,12 @@ func TestRouter(t *testing.T) {
 			expect:  deferDoHandlerExpect(store),
 		},
 		{
+			name:    "defer do on error handler",
+			router:  newDeferDoOnErrorHandler(store),
+			request: newDeferDoOnErrorHandlerRequest(t),
+			expect:  deferDoOnErrorHandlerExpect(store),
+		},
+		{
 			name:    "raw body codec handler",
 			router:  rawBodyCodecHandler(),
 			request: rawBodyCodecHandlerRequest(t),
@@ -246,6 +252,45 @@ func deferDoHandlerExpect(store map[string]string) func(t *testing.T, resp *http
 
 		assert.Equal(t, "ok", store["beforeResponseDefer"])
 		assert.Equal(t, "okok", store["afterResponseDefer"])
+	}
+}
+
+func newDeferDoOnErrorHandler(store map[string]string) http.Handler {
+	type deferDoResponse struct {
+		Ok bool `json:"ok"`
+	}
+	deferDoOnError := func(ctx tanukirpc.Context[struct{}], req struct{}) (*deferDoResponse, error) {
+		ctx.Defer(func() error {
+			store["beforeCheckError"] = "ok"
+			return nil
+		}, tanukirpc.DeferDoTimingBeforeCheckError)
+		return nil, tanukirpc.WrapErrorWithStatus(http.StatusNotFound, errors.New("not found"))
+	}
+	router := tanukirpc.NewRouter(struct{}{})
+	router.Use(middleware.Logger)
+	router.Get("/defer_on_error", tanukirpc.NewHandler(deferDoOnError))
+
+	return router
+}
+
+func newDeferDoOnErrorHandlerRequest(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "/defer_on_error", nil)
+	require.NoError(t, err)
+	req.Header.Set("accept", "application/json")
+	return req
+}
+
+func deferDoOnErrorHandlerExpect(store map[string]string) func(t *testing.T, resp *http.Response, err error) {
+	return func(t *testing.T, resp *http.Response, err error) {
+		require.NoError(t, err)
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		var body tanukirpc.ErrorMessage
+		assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		assert.Equal(t, "not found", body.Error.Message)
+
+		assert.Equal(t, "ok", store["beforeCheckError"])
 	}
 }
 

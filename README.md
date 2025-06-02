@@ -240,8 +240,9 @@ For more detailed usage, refer to the [_example/todo](./_example/todo) directory
 
 `tanukirpc` supports defer hooks for cleanup. You can register a function using `ctx.Defer` to be called after the handler function has been executed. These hooks are executed in LIFO (Last-In, First-Out) order.
 
-`Defer` supports two timings:
+`Defer` supports three timings:
 *   `DeferDoTimingAfterResponse` (default): Executes after the response has been written. Suitable for cleanup tasks like closing connections or logging.
+*   `DeferDoTimingBeforeCheckError`: Executes before checking if the response is an error. This timing is useful for actions that should occur regardless of whether the response is an error, such as logging or cleanup tasks. It will run even if the handler returns an error using `tanukirpc.WrapErrorWithStatus`, unlike the other timings.
 *   `DeferDoTimingBeforeResponse`: Executes before the response is written. Useful for modifying headers or performing actions just before sending the response.
 
 Deferred functions work correctly even when using `RouteWithTransformer`. Functions deferred in an outer context will execute after functions deferred in an inner context (respecting LIFO order across context boundaries).
@@ -264,6 +265,17 @@ func myHandler(ctx tanukirpc.Context[struct{}], req myRequest) (*myResponse, err
 
     fmt.Println("Handler logic executing...")
     return &myResponse{Data: "Success"}, nil
+}
+
+fnc myErrorHandler(ctx tanukirpc.Context[struct{}], req myRequest) (*myResponse, error) {
+    // This will run before checking if the response is an error
+    ctx.Defer(func() error {
+        fmt.Println("Cleanup before checking error")
+        return nil
+    }, tanukirpc.DeferDoTimingBeforeCheckError)
+
+    // Simulate an error
+    return nil, tanukirpc.WrapErrorWithStatus(http.StatusInternalServerError, errors.New("something went wrong"))
 }
 ```
 
