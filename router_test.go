@@ -107,6 +107,24 @@ func TestRouter(t *testing.T) {
 			request: errorRedirectHandlerRequest(t),
 			expect:  errorRedirectHandlerExpect,
 		},
+		{
+			name:    "with handler success",
+			router:  withHandler(),
+			request: withHandlerSuccessRequest(t),
+			expect:  withHandlerSuccessExpect,
+		},
+		{
+			name:    "with handler unauthorized",
+			router:  withHandler(),
+			request: withHandlerUnauthorizedRequest(t),
+			expect:  withHandlerUnauthorizedExpect,
+		},
+		{
+			name:    "with in without success",
+			router:  withHandler(),
+			request: withInWithoutSuccessRequest(t),
+			expect:  withInWithoutSuccessExpect,
+		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -389,4 +407,95 @@ func errorRedirectHandlerExpect(t *testing.T, resp *http.Response, err error) {
 
 	assert.Equal(t, http.StatusFound, resp.StatusCode)
 	assert.Equal(t, "https://example.com", resp.Header.Get("Location"))
+}
+
+func withHandler() http.Handler {
+	h := func(ctx tanukirpc.Context[struct{}], req struct{}) (struct {
+		Ok string `json:"ok"`
+	}, error,
+	) {
+		return struct {
+			Ok string `json:"ok"`
+		}{
+			Ok: "ok",
+		}, nil
+	}
+	router := tanukirpc.NewRouter(struct{}{})
+	router.With(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sig := r.Header.Get("X-Signature")
+			if sig != "deadbeef" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}).Get("/with_handler", tanukirpc.NewHandler(h))
+	router.Get("/without_handler", tanukirpc.NewHandler(func(ctx tanukirpc.Context[struct{}], req struct{}) (struct {
+		Ok string `json:"ok"`
+	}, error,
+	) {
+		return struct {
+			Ok string `json:"ok"`
+		}{
+			Ok: "ok",
+		}, nil
+	}))
+
+	return router
+}
+
+func withHandlerSuccessRequest(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "/with_handler", nil)
+	require.NoError(t, err)
+	req.Header.Set("accept", "application/json")
+	req.Header.Set("X-Signature", "deadbeef")
+	return req
+}
+
+func withHandlerSuccessExpect(t *testing.T, resp *http.Response, err error) {
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	type withHandlerResponse struct {
+		Ok string `json:"ok"`
+	}
+	var body withHandlerResponse
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "ok", body.Ok)
+}
+
+func withHandlerUnauthorizedRequest(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "/with_handler", nil)
+	require.NoError(t, err)
+	req.Header.Set("accept", "application/json")
+	return req
+}
+
+func withHandlerUnauthorizedExpect(t *testing.T, resp *http.Response, err error) {
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func withInWithoutSuccessRequest(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "/without_handler", nil)
+	require.NoError(t, err)
+	req.Header.Set("accept", "application/json")
+	return req
+}
+
+func withInWithoutSuccessExpect(t *testing.T, resp *http.Response, err error) {
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	type withInWithoutResponse struct {
+		Ok string `json:"ok"`
+	}
+	var body withInWithoutResponse
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "ok", body.Ok)
 }
