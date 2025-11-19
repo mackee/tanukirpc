@@ -1,9 +1,11 @@
+// Package oidc provides handlers for OIDC authentication.
 package oidc
 
 import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -15,13 +17,14 @@ import (
 
 // Handlers is a set of handlers for OIDC authentication.
 type Handlers[Reg sessions.RegistryWithAccessor] struct {
-	defaultReferrer      string
-	allowedDomains       []string
-	oauth2Config         *oauth2.Config
-	verifier             *oidc.IDTokenVerifier
-	referrerBaseURL      string
-	successBehavior      func(tanukirpc.Context[Reg], *SuccessBehaviorInput) error
-	unauthorizedBehavior func(tanukirpc.Context[Reg]) error
+	defaultReferrer          string
+	allowedDomains           []string
+	oauth2Config             *oauth2.Config
+	verifier                 *oidc.IDTokenVerifier
+	referrerBaseURL          string
+	successBehavior          func(tanukirpc.Context[Reg], *SuccessBehaviorInput) error
+	unauthorizedBehavior     func(tanukirpc.Context[Reg]) error
+	notAllowedDomainBehavior func(tanukirpc.Context[Reg]) error
 }
 
 // HandlersOption is an option for Handlers.
@@ -76,6 +79,13 @@ func WithUnauthorizedRedirect[Reg sessions.RegistryWithAccessor](url string) Han
 	}
 }
 
+// WithNotAllowedDomainBehavior sets the not allowed behavior.
+func WithNotAllowedDomainBehavior[Reg sessions.RegistryWithAccessor](fn func(tanukirpc.Context[Reg]) error) HandlersOption[Reg] {
+	return func(a *Handlers[Reg]) {
+		a.notAllowedDomainBehavior = fn
+	}
+}
+
 // NewHandlers creates a new Handlers.
 func NewHandlers[Reg sessions.RegistryWithAccessor](oauth2Config *oauth2.Config, provider *oidc.Provider, opts ...HandlersOption[Reg]) *Handlers[Reg] {
 	verifier := provider.Verifier(&oidc.Config{ClientID: oauth2Config.ClientID})
@@ -99,6 +109,7 @@ func (a *Handlers[Reg]) referrer(req *http.Request) string {
 		if !strings.HasPrefix("/", s) {
 			s = "/" + s
 		}
+		referrer = s
 	}
 	return referrer
 }
@@ -215,14 +226,11 @@ func (a *Handlers[Reg]) Callback(ctx tanukirpc.Context[Reg], req AuthCallbackReq
 		return struct{}{}, fmt.Errorf("failed to parse claims: %w", err)
 	}
 
-	allowed := len(a.allowedDomains) == 0
-	for _, hd := range a.allowedDomains {
-		if hd == idTokenClaims.Hd {
-			allowed = true
-			break
-		}
-	}
+	allowed := len(a.allowedDomains) == 0 || slices.Contains(a.allowedDomains, idTokenClaims.Hd)
 	if !allowed {
+		if a.notAllowedDomainBehavior != nil {
+			return struct{}{}, a.notAllowedDomainBehavior(ctx)
+		}
 		return struct{}{}, tanukirpc.WrapErrorWithStatus(http.StatusForbidden, fmt.Errorf("domain not allowed"))
 	}
 
