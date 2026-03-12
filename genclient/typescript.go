@@ -28,7 +28,7 @@ var TypeScriptClientGenerator = &analysis.Analyzer{
 	Requires: []*analysis.Analyzer{
 		Analyzer,
 	},
-	ResultType: reflect.TypeOf((*bytes.Buffer)(nil)),
+	ResultType: reflect.TypeFor[*bytes.Buffer](),
 }
 
 var typeScriptClientOutPath string
@@ -129,21 +129,23 @@ type typeScriptClientGeneratorObjectField struct {
 }
 
 func (t *typeScriptClientGeneratorObjectField) RenderRequest(prefix string) string {
-	ret := "{\n"
+	var ret strings.Builder
+	ret.WriteString("{\n")
 	for _, field := range t.fields {
-		ret += field.RenderRequest(prefix+"  ") + "\n"
+		ret.WriteString(field.RenderRequest(prefix+"  ") + "\n")
 	}
-	ret += prefix + "}"
-	return ret
+	ret.WriteString(prefix + "}")
+	return ret.String()
 }
 
 func (t *typeScriptClientGeneratorObjectField) RenderResponse(prefix string) string {
-	ret := "{\n"
+	var ret strings.Builder
+	ret.WriteString("{\n")
 	for _, field := range t.fields {
-		ret += field.RenderResponse(prefix+"  ") + "\n"
+		ret.WriteString(field.RenderResponse(prefix+"  ") + "\n")
 	}
-	ret += prefix + "}"
-	return ret
+	ret.WriteString(prefix + "}")
+	return ret.String()
 }
 
 type typeScriptClientGeneratorGenericField struct {
@@ -457,12 +459,12 @@ func (t *typeScriptClientGeneratorTemplateArgsMethodPath) Builder() string {
 	if len(args) == 0 {
 		return ""
 	}
-	argType := ""
+	var argType strings.Builder
 	for i, arg := range args {
 		if i > 0 {
-			argType += ", "
+			argType.WriteString(", ")
 		}
-		argType += fmt.Sprintf("%s: string", arg)
+		argType.WriteString(fmt.Sprintf("%s: string", arg))
 	}
 	builder := ""
 	for _, fragment := range pathFragments[1:] {
@@ -476,5 +478,5 @@ func (t *typeScriptClientGeneratorTemplateArgsMethodPath) Builder() string {
 		builder += fmt.Sprintf("${args.%s}", argName)
 	}
 
-	return fmt.Sprintf(`  "%s": (args: {%s}) => `+"`%s`", string(t.Path), argType, builder)
+	return fmt.Sprintf(`  "%s": (args: {%s}) => `+"`%s`", string(t.Path), argType.String(), builder)
 }

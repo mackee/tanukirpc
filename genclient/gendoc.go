@@ -27,7 +27,7 @@ var Analyzer = &analysis.Analyzer{
 		inspect.Analyzer,
 		buildssa.Analyzer,
 	},
-	ResultType: reflect.TypeOf(&AnalyzerResult{}),
+	ResultType: reflect.TypeFor[*AnalyzerResult](),
 }
 
 type AnalyzerResult struct {

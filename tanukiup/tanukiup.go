@@ -248,7 +248,7 @@ func Run(ctx context.Context, options ...Option) error {
 	}
 
 	for _, dir := range args.dirs {
-		if noRecursive := strings.TrimSuffix(dir, "..."); noRecursive != dir {
+		if noRecursive, ok := strings.CutSuffix(dir, "..."); ok {
 			noRecursive = filepath.Join(args.baseDir, noRecursive)
 			stat, err := os.Stat(noRecursive)
 			if err != nil {
