@@ -340,7 +340,7 @@ func NewRawBodyCodec() *RawBodyCodec {
 func (r *RawBodyCodec) Name() string { return "rawbody" }
 
 func (r *RawBodyCodec) assignableToReadCloser(t reflect.Type) bool {
-	return t.AssignableTo(reflect.TypeOf((*io.ReadCloser)(nil)).Elem())
+	return t.AssignableTo(reflect.TypeFor[io.ReadCloser]())
 }
 
 func (r *RawBodyCodec) Decode(req *http.Request, v any) error {
