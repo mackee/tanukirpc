@@ -466,17 +466,17 @@ func (t *typeScriptClientGeneratorTemplateArgsMethodPath) Builder() string {
 		}
 		argType.WriteString(fmt.Sprintf("%s: string", arg))
 	}
-	builder := ""
+	var builder strings.Builder
 	for _, fragment := range pathFragments[1:] {
-		builder += "/"
+		builder.WriteString("/")
 		if !strings.HasPrefix(fragment, "{") || !strings.HasSuffix(fragment, "}") {
-			builder += fragment
+			builder.WriteString(fragment)
 			continue
 		}
 		var argName string
 		argName, args = args[0], args[1:]
-		builder += fmt.Sprintf("${args.%s}", argName)
+		builder.WriteString(fmt.Sprintf("${args.%s}", argName))
 	}
 
-	return fmt.Sprintf(`  "%s": (args: {%s}) => `+"`%s`", string(t.Path), argType.String(), builder)
+	return fmt.Sprintf(`  "%s": (args: {%s}) => `+"`%s`", string(t.Path), argType.String(), builder.String())
 }

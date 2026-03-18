@@ -315,6 +315,12 @@ type Registry struct {
 func (r *RegistryFactory) NewRegistry(w http.ResponseWriter, req *http.Request) (*Registry, error) {
 	accessor, err := r.Store.GetAccessor(req)
 	if err != nil {
+		if tsessions.IsInvalidSessionError(err) {
+			// Decide how to recover in your application, for example:
+			// - expire the broken cookie
+			// - return tanukirpc.ErrorRedirectTo(...)
+			// - return tanukirpc.WrapErrorWithStatus(...)
+		}
 		return nil, fmt.Errorf("failed to get session accessor: %w", err)
 	}
 

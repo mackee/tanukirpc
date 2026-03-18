@@ -1,12 +1,26 @@
 package gorilla
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	gorillasessions "github.com/gorilla/sessions"
 	"github.com/mackee/tanukirpc/sessions"
 )
+
+type secureCookieDecodeError interface {
+	IsDecode() bool
+}
+
+func wrapInvalidSessionError(err error) error {
+	return fmt.Errorf("failed to get session: %w", sessions.NewInvalidSessionError(err))
+}
+
+func isSecureCookieDecodeError(err error) bool {
+	var decodeErr secureCookieDecodeError
+	return errors.As(err, &decodeErr) && decodeErr.IsDecode()
+}
 
 type gorillaStore struct {
 	store       gorillasessions.Store
@@ -38,6 +52,9 @@ func NewStore(store gorillasessions.Store, opts ...Option) (sessions.Store, erro
 func (s *gorillaStore) GetAccessor(req *http.Request) (sessions.Accessor, error) {
 	session, err := s.store.Get(req, s.sessionName)
 	if err != nil {
+		if isSecureCookieDecodeError(err) {
+			return nil, wrapInvalidSessionError(err)
+		}
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 

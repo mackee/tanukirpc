@@ -75,17 +75,17 @@ type ErrorHooker interface {
 type errorHooker struct{}
 
 func (e *errorHooker) OnError(w http.ResponseWriter, req *http.Request, logger *slog.Logger, codec Codec, err error) {
-	var ewr ErrorWithRedirect
-	if errors.As(err, &ewr) {
+	if ewr, ok := errors.AsType[ErrorWithRedirect](err); ok {
 		http.Redirect(w, req, ewr.Redirect(), ewr.Status())
 		return
 	}
-	var ews ErrorWithStatus
-	if errors.As(err, &ews) {
+	if ews, ok := errors.AsType[ErrorWithStatus](err); ok {
 		w.WriteHeader(ews.Status())
 	} else {
 		w.WriteHeader(http.StatusInternalServerError)
 		logger.ErrorContext(req.Context(), "ocurred internal server error", slog.Any("error", err))
 	}
-	codec.Encode(w, req, ErrorMessage{Error: ErrorBody{Message: err.Error()}})
+	if err := codec.Encode(w, req, ErrorMessage{Error: ErrorBody{Message: err.Error()}}); err != nil {
+		logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("error", err))
+	}
 }

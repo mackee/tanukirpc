@@ -1,6 +1,35 @@
 package sessions
 
-import "net/http"
+import (
+	"errors"
+	"fmt"
+	"net/http"
+)
+
+// ErrInvalidSession indicates that the session cookie exists but could not be decoded.
+var ErrInvalidSession = errors.New("invalid session")
+
+type invalidSessionError struct {
+	err error
+}
+
+func (e *invalidSessionError) Error() string {
+	return fmt.Sprintf("%s: %v", ErrInvalidSession, e.err)
+}
+
+func (e *invalidSessionError) Unwrap() []error {
+	return []error{ErrInvalidSession, e.err}
+}
+
+// NewInvalidSessionError wraps an underlying session decode error.
+func NewInvalidSessionError(err error) error {
+	return &invalidSessionError{err: err}
+}
+
+// IsInvalidSessionError reports whether err represents an invalid session cookie.
+func IsInvalidSessionError(err error) bool {
+	return errors.Is(err, ErrInvalidSession)
+}
 
 // ReqResp is an interface for request and response. uses for SessionAccessor.
 type ReqResp interface {
