@@ -39,9 +39,13 @@ func TestGetAccessorMarksInvalidSession(t *testing.T) {
 	invalidReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	invalidReq.AddCookie(cookies[0])
 
-	accessor, err := store.GetAccessor(invalidReq)
-	require.Nil(t, accessor)
+	a, err := store.GetAccessor(invalidReq)
+	require.NotNil(t, a)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, sessions.ErrInvalidSession))
 	require.True(t, sessions.IsInvalidSessionError(err))
+
+	acc, ok := a.(*accessor)
+	require.True(t, ok)
+	require.True(t, acc.session.IsNew)
 }

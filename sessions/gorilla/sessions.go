@@ -53,15 +53,16 @@ func (s *gorillaStore) GetAccessor(req *http.Request) (sessions.Accessor, error)
 	session, err := s.store.Get(req, s.sessionName)
 	if err != nil {
 		if isSecureCookieDecodeError(err) {
-			return nil, wrapInvalidSessionError(err)
+			err = wrapInvalidSessionError(err)
+		} else {
+			return nil, fmt.Errorf("failed to get session: %w", err)
 		}
-		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 
 	return &accessor{
 		store:   s,
 		session: session,
-	}, nil
+	}, err
 }
 
 type accessor struct {
