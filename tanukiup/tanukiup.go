@@ -165,47 +165,51 @@ func Run(ctx context.Context, options ...Option) error {
 	}
 	defer watcher.Close()
 
-	errChan := make(chan error)
-	defer close(errChan)
 	restartChan := make(chan struct{})
 	defer close(restartChan)
 	go func() {
-		skipStart := false
-		for {
+		var (
+			commandDone  <-chan error
+			cancelRunner context.CancelFunc
+		)
+		startRunner := func() {
 			cmdCtx, cancel := context.WithCancel(ctx)
-			if !skipStart {
-				go func() {
-					if err := runGenerator(ctx); err != nil {
-						var exitError *exec.ExitError
-						if !errors.Is(err, context.Canceled) &&
-							!errors.As(err, &exitError) &&
-							exitError.ExitCode() != -1 {
-							slog.ErrorContext(ctx, "failed to generate command", slog.Any("error", err))
-							errChan <- err
-						}
-						return
-					}
-					if err := startCmd(cmdCtx, args); err != nil {
-						var exitError *exec.ExitError
-						if !errors.Is(err, context.Canceled) &&
-							!errors.As(err, &exitError) &&
-							exitError.ExitCode() != -1 {
-							slog.ErrorContext(ctx, "failed to start command", slog.Any("error", err))
-							errChan <- err
-						}
-					}
-				}()
+			done := make(chan error, 1)
+			commandDone = done
+			cancelRunner = cancel
+			go func() {
+				done <- runCommandCycle(cmdCtx, args)
+			}()
+		}
+		stopRunner := func() {
+			if cancelRunner == nil {
+				return
 			}
+			cancelRunner()
+			if err := <-commandDone; err != nil && !isCommandCancelError(err) {
+				slog.ErrorContext(ctx, "failed to stop command", slog.Any("error", err))
+			}
+			cancelRunner = nil
+			commandDone = nil
+		}
+		startRunner()
+		for {
 			select {
 			case <-ctx.Done():
-				cancel()
+				stopRunner()
 				return
 			case <-restartChan:
-				cancel()
-				skipStart = false
-			case <-errChan:
-				cancel()
-				skipStart = true
+				stopRunner()
+				startRunner()
+			case err := <-commandDone:
+				if cancelRunner != nil {
+					cancelRunner()
+				}
+				cancelRunner = nil
+				commandDone = nil
+				if err != nil && !isCommandCancelError(err) {
+					slog.ErrorContext(ctx, "command stopped with error", slog.Any("error", err))
+				}
 			}
 		}
 	}()
@@ -271,6 +275,27 @@ func Run(ctx context.Context, options ...Option) error {
 	return nil
 }
 
+func runCommandCycle(ctx context.Context, args *optionArgs) error {
+	if err := runGenerator(ctx); err != nil {
+		return fmt.Errorf("failed to generate command: %w", err)
+	}
+	if err := startCmd(ctx, args); err != nil {
+		return fmt.Errorf("failed to start command: %w", err)
+	}
+	return nil
+}
+
+func isCommandCancelError(err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	var exitError *exec.ExitError
+	return errors.As(err, &exitError) && exitError.ExitCode() == -1
+}
+
 type isDirer interface {
 	IsDir() bool
 }
@@ -326,11 +351,11 @@ func startCmd(ctx context.Context, args *optionArgs) error {
 		}
 	}
 	slog.InfoContext(ctx, "building command", slog.Any("command", buildCommand))
-	bcmd := exec.CommandContext(ctx, buildCommand[0], buildCommand[1:]...)
+	bcmd := newCommand(buildCommand[0], buildCommand[1:]...)
 	bcmd.Dir = args.baseDir
 	bcmd.Stdout = os.Stdout
 	bcmd.Stderr = os.Stderr
-	if err := bcmd.Run(); err != nil {
+	if err := runCommand(ctx, bcmd); err != nil {
 		return fmt.Errorf("failed to build command: %w", err)
 	}
 	defer os.Remove(outpath)
@@ -345,7 +370,7 @@ func startCmd(ctx context.Context, args *optionArgs) error {
 	}
 
 	slog.InfoContext(ctx, "executing command", slog.Any("command", execCommand))
-	ecmd := exec.CommandContext(ctx, execCommand[0], execCommand[1:]...)
+	ecmd := newCommand(execCommand[0], execCommand[1:]...)
 	ecmd.Dir = args.baseDir
 	ecmd.Stdout = os.Stdout
 	ecmd.Stderr = os.Stderr
@@ -355,7 +380,7 @@ func startCmd(ctx context.Context, args *optionArgs) error {
 		waitAndListenProxyServer(ctx, args.addr, args.handlerDir, up, args.catchAllTarget)
 	}
 
-	if err := ecmd.Run(); err != nil {
+	if err := runCommand(ctx, ecmd); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
@@ -369,11 +394,11 @@ type generatorInfo struct {
 
 func (g *generatorInfo) run(ctx context.Context) error {
 	slog.InfoContext(ctx, "running generator", slog.Any("command", g.command), slog.String("dir", g.dir))
-	cmd := exec.CommandContext(ctx, g.command[0], g.command[1:]...)
+	cmd := newCommand(g.command[0], g.command[1:]...)
 	cmd.Dir = g.dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := runCommand(ctx, cmd); err != nil {
 		return fmt.Errorf("failed to run generator: %w", err)
 	}
 	return nil
@@ -447,10 +472,10 @@ var routePathsCommand = []string{"go", "run", "github.com/mackee/tanukirpc/cmd/s
 
 func retrievePaths(ctx context.Context, handlerDir string) ([]routePath, error) {
 	buf := &bytes.Buffer{}
-	ecmd := exec.CommandContext(ctx, routePathsCommand[0], append(routePathsCommand[1:], handlerDir)...)
+	ecmd := newCommand(routePathsCommand[0], append(routePathsCommand[1:], handlerDir)...)
 	ecmd.Stdout = buf
 
-	if err := ecmd.Run(); err != nil {
+	if err := runCommand(ctx, ecmd); err != nil {
 		return nil, fmt.Errorf("failed to run showpaths: %w", err)
 	}
 	type paths struct {
