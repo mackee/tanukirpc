@@ -38,22 +38,39 @@ func runCommand(ctx context.Context, cmd *exec.Cmd) error {
 	terminateErr := terminateCommand(cmd)
 	timer := time.NewTimer(processShutdownGracePeriod)
 	defer timer.Stop()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
 
+	childDone := false
 	select {
 	case <-done:
-		// The direct child may have exited while descendants in its process group
-		// are still alive. Make a final best-effort sweep of the group.
-		_ = killCommand(cmd)
-		if terminateErr != nil && !errors.Is(terminateErr, os.ErrProcessDone) {
-			return terminateErr
+		childDone = true
+	default:
+	}
+	if terminateErr != nil && !errors.Is(terminateErr, os.ErrProcessDone) {
+		if !childDone {
+			<-done
 		}
-		return ctx.Err()
-	case <-timer.C:
-		killErr := killCommand(cmd)
-		<-done
-		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
-			return killErr
+		return terminateErr
+	}
+
+	for {
+		if childDone && commandGroupDone(cmd) {
+			return ctx.Err()
 		}
-		return ctx.Err()
+		select {
+		case <-done:
+			childDone = true
+		case <-ticker.C:
+		case <-timer.C:
+			killErr := killCommand(cmd)
+			if !childDone {
+				<-done
+			}
+			if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+				return killErr
+			}
+			return ctx.Err()
+		}
 	}
 }

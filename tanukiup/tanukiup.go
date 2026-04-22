@@ -166,8 +166,9 @@ func Run(ctx context.Context, options ...Option) error {
 	defer watcher.Close()
 
 	restartChan := make(chan struct{}, 1)
-	defer close(restartChan)
+	runnerDone := make(chan struct{})
 	go func() {
+		defer close(runnerDone)
 		var (
 			commandDone  <-chan error
 			cancelRunner context.CancelFunc
@@ -275,6 +276,7 @@ func Run(ctx context.Context, options ...Option) error {
 	}
 
 	<-ctx.Done()
+	<-runnerDone
 	return nil
 }
 

@@ -21,6 +21,16 @@ func killCommand(cmd *exec.Cmd) error {
 	return signalCommandGroup(cmd, syscall.SIGKILL)
 }
 
+func commandGroupDone(cmd *exec.Cmd) bool {
+	if cmd.Process == nil {
+		return true
+	}
+	if err := syscall.Kill(-cmd.Process.Pid, 0); err != nil {
+		return errors.Is(err, syscall.ESRCH)
+	}
+	return false
+}
+
 func signalCommandGroup(cmd *exec.Cmd, sig syscall.Signal) error {
 	if cmd.Process == nil {
 		return os.ErrProcessDone

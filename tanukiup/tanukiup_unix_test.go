@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -105,6 +107,101 @@ func TestRunRestartTerminatesDescendantProcesses(t *testing.T) {
 	cleanupOldPID = false
 }
 
+func TestRunCancelWaitsForDescendantCleanup(t *testing.T) {
+	t.Setenv(tanukiupHelperEnv, "1")
+
+	tempDir := t.TempDir()
+	watchDir := filepath.Join(tempDir, "watch")
+	if err := os.Mkdir(watchDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	pidFile := filepath.Join(tempDir, "grandchild.pid")
+	readyFile := filepath.Join(tempDir, "ready")
+	helperCommand := []string{
+		os.Args[0],
+		"-test.run=^TestTanukiupHelperProcess$",
+		"--",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx,
+			WithDirs([]string{watchDir}),
+			WithBuildCommand(append(slices.Clone(helperCommand), "build")),
+			WithExecCommand(append(slices.Clone(helperCommand), "parent", pidFile, readyFile)),
+			WithLogLevel(slog.LevelError),
+			WithTempDir(tempDir),
+		)
+	}()
+
+	waitForFile(t, readyFile, 5*time.Second)
+	pid := readPIDFile(t, pidFile)
+	cleanupPID := true
+	defer func() {
+		if cleanupPID {
+			killPID(pid)
+		}
+	}()
+	if !pidExists(pid) {
+		t.Fatalf("grandchild process did not start: pid=%d", pid)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("tanukiup returned error: %v", err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("tanukiup did not stop")
+	}
+	if pidExists(pid) {
+		t.Fatalf("descendant process is still running after Run returned: pid=%d", pid)
+	}
+	cleanupPID = false
+}
+
+func TestRunCommandGivesDescendantsShutdownGracePeriod(t *testing.T) {
+	t.Setenv(tanukiupHelperEnv, "1")
+
+	tempDir := t.TempDir()
+	terminatedFile := filepath.Join(tempDir, "terminated")
+	exitedFile := filepath.Join(tempDir, "exited")
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := newCommand(
+		os.Args[0],
+		"-test.run=^TestTanukiupHelperProcess$",
+		"--",
+		"parent-graceful-grandchild",
+		terminatedFile,
+		exitedFile,
+	)
+	cmd.Env = os.Environ()
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runCommand(ctx, cmd)
+	}()
+
+	waitForFile(t, terminatedFile, 5*time.Second)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runCommand returned error: %v", err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("runCommand did not stop")
+	}
+	if _, err := os.Stat(exitedFile); err != nil {
+		t.Fatalf("grandchild did not exit gracefully: %v", err)
+	}
+}
+
 func TestTanukiupHelperProcess(t *testing.T) {
 	if os.Getenv(tanukiupHelperEnv) != "1" {
 		return
@@ -125,6 +222,18 @@ func TestTanukiupHelperProcess(t *testing.T) {
 			os.Exit(2)
 		}
 		runTanukiupParentHelper(args[idx+2], args[idx+3])
+	case "parent-graceful-grandchild":
+		if idx+3 >= len(args) {
+			fmt.Fprintln(os.Stderr, "missing parent-graceful-grandchild helper args")
+			os.Exit(2)
+		}
+		runTanukiupParentGracefulGrandchildHelper(args[idx+2], args[idx+3])
+	case "graceful-grandchild":
+		if idx+3 >= len(args) {
+			fmt.Fprintln(os.Stderr, "missing graceful-grandchild helper args")
+			os.Exit(2)
+		}
+		runTanukiupGracefulGrandchildHelper(args[idx+2], args[idx+3])
 	case "grandchild":
 		for {
 			time.Sleep(time.Hour)
@@ -158,6 +267,42 @@ func runTanukiupParentHelper(pidFile, readyFile string) {
 	for {
 		time.Sleep(time.Hour)
 	}
+}
+
+func runTanukiupParentGracefulGrandchildHelper(terminatedFile, exitedFile string) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestTanukiupHelperProcess$", "--", "graceful-grandchild", terminatedFile, exitedFile)
+	cmd.Env = os.Environ()
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start graceful grandchild: %v\n", err)
+		os.Exit(2)
+	}
+	go func() {
+		_ = cmd.Wait()
+	}()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	<-sig
+	os.Exit(0)
+}
+
+func runTanukiupGracefulGrandchildHelper(terminatedFile, exitedFile string) {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	if err := os.WriteFile(terminatedFile, []byte("ready"), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write terminated file: %v\n", err)
+		os.Exit(2)
+	}
+	<-sig
+	time.Sleep(200 * time.Millisecond)
+	if err := os.WriteFile(exitedFile, []byte("exited"), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write exited file: %v\n", err)
+		os.Exit(2)
+	}
+	os.Exit(0)
 }
 
 func waitForFile(t *testing.T, path string, timeout time.Duration) {
