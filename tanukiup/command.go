@@ -40,23 +40,17 @@ func runCommand(ctx context.Context, cmd *exec.Cmd) error {
 	defer timer.Stop()
 
 	select {
-	case err := <-done:
+	case <-done:
 		// The direct child may have exited while descendants in its process group
 		// are still alive. Make a final best-effort sweep of the group.
 		_ = killCommand(cmd)
-		if err != nil {
-			return err
-		}
 		if terminateErr != nil && !errors.Is(terminateErr, os.ErrProcessDone) {
 			return terminateErr
 		}
 		return ctx.Err()
 	case <-timer.C:
 		killErr := killCommand(cmd)
-		err := <-done
-		if err != nil {
-			return err
-		}
+		<-done
 		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
 			return killErr
 		}

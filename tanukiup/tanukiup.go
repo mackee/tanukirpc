@@ -165,7 +165,7 @@ func Run(ctx context.Context, options ...Option) error {
 	}
 	defer watcher.Close()
 
-	restartChan := make(chan struct{})
+	restartChan := make(chan struct{}, 1)
 	defer close(restartChan)
 	go func() {
 		var (
@@ -233,7 +233,10 @@ func Run(ctx context.Context, options ...Option) error {
 						continue
 					}
 					slog.InfoContext(ctx, "modified file", slog.String("filename", event.Name))
-					restartChan <- struct{}{}
+					select {
+					case restartChan <- struct{}{}:
+					default:
+					}
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {

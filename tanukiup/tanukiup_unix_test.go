@@ -67,7 +67,12 @@ func TestRunRestartTerminatesDescendantProcesses(t *testing.T) {
 
 	waitForFile(t, readyFile, 5*time.Second)
 	oldPID := readPIDFile(t, pidFile)
-	defer killPID(oldPID)
+	cleanupOldPID := true
+	defer func() {
+		if cleanupOldPID {
+			killPID(oldPID)
+		}
+	}()
 	if !pidExists(oldPID) {
 		t.Fatalf("grandchild process did not start: pid=%d", oldPID)
 	}
@@ -97,6 +102,7 @@ func TestRunRestartTerminatesDescendantProcesses(t *testing.T) {
 	if stillRunning := waitForPIDExit(oldPID, 2*time.Second); stillRunning {
 		t.Fatalf("old descendant process is still running after restart: pid=%d", oldPID)
 	}
+	cleanupOldPID = false
 }
 
 func TestTanukiupHelperProcess(t *testing.T) {
@@ -138,6 +144,9 @@ func runTanukiupParentHelper(pidFile, readyFile string) {
 		fmt.Fprintf(os.Stderr, "failed to start grandchild: %v\n", err)
 		os.Exit(2)
 	}
+	go func() {
+		_ = cmd.Wait()
+	}()
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to write pid file: %v\n", err)
 		os.Exit(2)
