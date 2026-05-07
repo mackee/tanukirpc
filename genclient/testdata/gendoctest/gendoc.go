@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/mackee/tanukirpc"
+	"github.com/mackee/tanukirpc/codec"
 	"github.com/mackee/tanukirpc/genclient"
 )
 
@@ -40,6 +41,14 @@ func testGendoc() {
 		))
 		r.Get("/{epoch:[0-9]+}", tanukirpc.NewHandler(epochHandler))
 	})
+	type dashboardProps struct {
+		Title string `json:"title"`
+	}
+	router.Get("/dashboard", tanukirpc.NewHandler(
+		func(ctx tanukirpc.Context[struct{}], _ struct{}) (codec.Page[dashboardProps], error) {
+			return codec.Render("Dashboard", dashboardProps{Title: "Dashboard"}), nil
+		},
+	))
 
 	genclient.AnalyzeTarget(router)
 }
