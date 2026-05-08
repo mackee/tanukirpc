@@ -35,7 +35,7 @@ func NewRouter[Reg any](reg Reg, opts ...RouterOption[Reg]) *Router[Reg] {
 		cr:                chi.NewRouter(),
 		codec:             DefaultCodecList,
 		contextFactory:    &DefaultContextFactory[Reg]{registry: reg},
-		errorHooker:       &errorHooker{},
+		errorHooker:       DefaultErrorHooker(),
 		logger:            NewLogger(slog.Default(), defaultLoggerKeys),
 		accessLogger:      &accessLogger{},
 		defaultMiddleware: defaultMiddleware,

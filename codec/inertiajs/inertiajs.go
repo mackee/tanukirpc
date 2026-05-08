@@ -370,7 +370,7 @@ func NewErrorHooker(ic *Codec, errorPage ErrorPageFunc, opts ...ErrorHookerOptio
 	h := &inertiaErrorHooker{
 		codec:     ic,
 		errorPage: errorPage,
-		fallback:  defaultErrorHooker{},
+		fallback:  tanukirpc.DefaultErrorHooker(),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -416,24 +416,4 @@ func (*inertiaErrorHooker) defaultErrorPage(_ *http.Request, err error, status i
 		"status":  status,
 		"message": err.Error(),
 	})
-}
-
-type defaultErrorHooker struct{}
-
-func (defaultErrorHooker) OnError(w http.ResponseWriter, req *http.Request, logger *slog.Logger, codec tanukirpc.Codec, err error) {
-	var redirect tanukirpc.ErrorWithRedirect
-	if errors.As(err, &redirect) {
-		http.Redirect(w, req, redirect.Redirect(), redirect.Status())
-		return
-	}
-	var withStatus tanukirpc.ErrorWithStatus
-	if errors.As(err, &withStatus) {
-		w.WriteHeader(withStatus.Status())
-	} else {
-		w.WriteHeader(http.StatusInternalServerError)
-		logger.ErrorContext(req.Context(), "ocurred internal server error", slog.Any("error", err))
-	}
-	if encodeErr := codec.Encode(w, req, tanukirpc.ErrorMessage{Error: tanukirpc.ErrorBody{Message: err.Error()}}); encodeErr != nil {
-		logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("error", encodeErr))
-	}
 }
