@@ -72,6 +72,11 @@ type ErrorHooker interface {
 	OnError(w http.ResponseWriter, req *http.Request, logger *slog.Logger, codec Codec, err error)
 }
 
+// DefaultErrorHooker returns the standard tanukirpc error hooker.
+func DefaultErrorHooker() ErrorHooker {
+	return &errorHooker{}
+}
+
 type errorHooker struct{}
 
 func (e *errorHooker) OnError(w http.ResponseWriter, req *http.Request, logger *slog.Logger, codec Codec, err error) {

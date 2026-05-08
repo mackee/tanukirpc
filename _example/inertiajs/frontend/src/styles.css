@@ -1,0 +1,305 @@
+:root {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  color: #202124;
+  background: #f6f5f1;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px clamp(20px, 4vw, 56px);
+  background: #ffffff;
+  border-bottom: 1px solid #dedbd1;
+}
+
+.brand {
+  font-weight: 800;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nav-link,
+.secondary-link,
+.primary-link,
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border-radius: 6px;
+  border: 1px solid #2d6a63;
+  padding: 0 14px;
+  font-weight: 700;
+}
+
+.nav-link,
+.secondary-link {
+  color: #2d6a63;
+  background: #ffffff;
+}
+
+.primary-link,
+button {
+  color: #ffffff;
+  background: #2d6a63;
+}
+
+button {
+  width: 100%;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.main {
+  width: min(1080px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 48px 0;
+}
+
+.page-heading {
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: #7d4f30;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  max-width: 720px;
+  margin-bottom: 0;
+  font-size: clamp(2rem, 5vw, 4rem);
+  line-height: 1.02;
+}
+
+h2 {
+  margin-bottom: 0;
+  font-size: 1rem;
+}
+
+code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #e9e2d7;
+}
+
+.summary-grid,
+.task-page {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 20px;
+}
+
+.metric,
+.panel,
+.copy-block {
+  border: 1px solid #dedbd1;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.metric {
+  display: grid;
+  align-content: center;
+  min-height: 220px;
+  padding: 28px;
+}
+
+.metric-label {
+  color: #5d6570;
+  font-weight: 700;
+}
+
+.metric strong {
+  color: #b54b3d;
+  font-size: 4rem;
+  line-height: 1;
+}
+
+.copy-block,
+.panel {
+  padding: 24px;
+}
+
+.copy-block {
+  display: grid;
+  gap: 20px;
+  align-content: start;
+}
+
+.copy-block p,
+.detail p {
+  color: #3f4650;
+  line-height: 1.7;
+}
+
+.panel-header,
+.detail-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.panel-header span {
+  color: #5d6570;
+  font-weight: 700;
+}
+
+.tasks {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 76px;
+  padding: 14px;
+  border: 1px solid #e6e1d8;
+  border-radius: 6px;
+}
+
+.task-row:hover {
+  border-color: #2d6a63;
+}
+
+.task-row span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.task-row small {
+  color: #5d6570;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.status-todo {
+  color: #7d4f30;
+  background: #f1dfc5;
+}
+
+.status-doing {
+  color: #245c86;
+  background: #d9ebf7;
+}
+
+.status-done {
+  color: #2d6a63;
+  background: #d9eee5;
+}
+
+.task-form {
+  display: grid;
+  gap: 14px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: #3f4650;
+  font-weight: 700;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #cdc8bd;
+  border-radius: 6px;
+  padding: 11px 12px;
+  color: #202124;
+  background: #ffffff;
+}
+
+input:focus,
+textarea:focus {
+  outline: 3px solid #c4dfd8;
+  border-color: #2d6a63;
+}
+
+.detail {
+  max-width: 720px;
+}
+
+@media (max-width: 760px) {
+  .topbar,
+  .summary-grid,
+  .task-page,
+  .task-row {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .task-row {
+    align-items: flex-start;
+  }
+}

@@ -205,9 +205,36 @@ func (t *typeScriptClientGeneratorVoidField) RenderResponse(prefix string) strin
 	return "undefined"
 }
 
+type typeScriptClientGeneratorInertiaPageField struct {
+	props typeScriptClientGeneratorField
+}
+
+func (t *typeScriptClientGeneratorInertiaPageField) RenderRequest(prefix string) string {
+	return t.RenderResponse(prefix)
+}
+
+func (t *typeScriptClientGeneratorInertiaPageField) RenderResponse(prefix string) string {
+	props := t.props.RenderResponse(prefix + "  ")
+	if _, ok := t.props.(*typeScriptClientGeneratorVoidField); ok {
+		props = "{}"
+	}
+	return fmt.Sprintf(`{
+%s  component: string;
+%s  props: %s;
+%s  url: string;
+%s  version?: unknown;
+%s  encryptHistory?: boolean;
+%s  clearHistory?: boolean;
+%s  preserveFragment?: boolean;
+%s}`, prefix, prefix, props, prefix, prefix, prefix, prefix, prefix, prefix)
+}
+
 func (t *typeScriptClientGenerator) typeInfo(tt types.Type, tagFilter string) (typeScriptClientGeneratorField, error) {
 	if tp, ok := tt.(*types.Pointer); ok {
 		tt = tp.Elem()
+	}
+	if field, ok, err := t.inertiaPageTypeInfo(tt, tagFilter); ok || err != nil {
+		return field, err
 	}
 	var ts *types.Struct
 	switch tt := tt.(type) {
@@ -233,6 +260,29 @@ func (t *typeScriptClientGenerator) typeInfo(tt types.Type, tagFilter string) (t
 	return &typeScriptClientGeneratorObjectField{
 		fields: fields,
 	}, nil
+}
+
+func (t *typeScriptClientGenerator) inertiaPageTypeInfo(tt types.Type, tagFilter string) (typeScriptClientGeneratorField, bool, error) {
+	if tagFilter != "json" {
+		return nil, false, nil
+	}
+	nt, ok := tt.(*types.Named)
+	if !ok {
+		return nil, false, nil
+	}
+	obj := nt.Obj()
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "github.com/mackee/tanukirpc/codec/inertiajs" || obj.Name() != "Page" {
+		return nil, false, nil
+	}
+	args := nt.TypeArgs()
+	if args == nil || args.Len() != 1 {
+		return nil, true, fmt.Errorf("unsupported inertia page type: %s", tt.String())
+	}
+	props, err := t.typeInfo(args.At(0), tagFilter)
+	if err != nil {
+		return nil, true, fmt.Errorf("failed to generate inertia props type: %w", err)
+	}
+	return &typeScriptClientGeneratorInertiaPageField{props: props}, true, nil
 }
 
 func (t *typeScriptClientGenerator) toFields(tt *types.Struct, filterTag string) ([]typeScriptClientGeneratorField, error) {

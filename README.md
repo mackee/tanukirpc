@@ -358,6 +358,43 @@ router.Route("/auth", func(router *tanukirpc.Router[*Registry]) {
 })
 ```
 
+### Inertia.js support
+
+`tanukirpc` provides an opt-in Inertia.js codec in the `github.com/mackee/tanukirpc/codec/inertiajs` package. It is not enabled by default, so API-only applications keep the default JSON/form/raw-body behavior.
+
+Inertia handlers return a typed `inertiajs.Page[T]` response. The codec writes the initial HTML shell for normal browser requests and writes the Inertia page JSON when the request includes `X-Inertia: true`.
+
+```go
+import (
+    "html/template"
+
+    "github.com/mackee/tanukirpc"
+    "github.com/mackee/tanukirpc/codec/inertiajs"
+)
+
+tmpl := template.Must(template.ParseFiles("templates/app.html"))
+inertia := inertiajs.New(tmpl, inertiajs.WithAssetVersion("dev"))
+
+router := tanukirpc.NewRouter(
+    registry,
+    tanukirpc.WithCodec[*Registry](tanukirpc.CodecList{
+        inertia,
+        tanukirpc.DefaultCodecList,
+    }),
+    tanukirpc.WithErrorHooker[*Registry](inertiajs.NewErrorHooker(inertia, nil)),
+)
+
+type HomeProps struct {
+    Message string `json:"message"`
+}
+
+func homeHandler(ctx tanukirpc.Context[*Registry], req struct{}) (inertiajs.Page[HomeProps], error) {
+    return inertiajs.Render("Home", HomeProps{Message: "Hello from Inertia.js"}), nil
+}
+```
+
+See [_example/inertiajs](./_example/inertiajs) for a working Go + Inertia.js + React application.
+
 ## License
 
 Copyright (c) 2024- [mackee](https://github.com/mackee)

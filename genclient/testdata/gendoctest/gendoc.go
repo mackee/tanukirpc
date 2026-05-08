@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/mackee/tanukirpc"
+	"github.com/mackee/tanukirpc/codec/inertiajs"
 	"github.com/mackee/tanukirpc/genclient"
 )
 
@@ -40,6 +41,14 @@ func testGendoc() {
 		))
 		r.Get("/{epoch:[0-9]+}", tanukirpc.NewHandler(epochHandler))
 	})
+	type dashboardProps struct {
+		Title string `json:"title"`
+	}
+	router.Get("/dashboard", tanukirpc.NewHandler(
+		func(ctx tanukirpc.Context[struct{}], _ struct{}) (inertiajs.Page[dashboardProps], error) {
+			return inertiajs.Render("Dashboard", dashboardProps{Title: "Dashboard"}), nil
+		},
+	))
 
 	genclient.AnalyzeTarget(router)
 }
