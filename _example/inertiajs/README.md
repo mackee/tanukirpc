@@ -33,6 +33,6 @@ Open http://127.0.0.1:8080.
 
 ### What to look at
 
-- `main.go` configures `codec.NewInertiajs` and returns `codec.Render(...)` from page handlers.
+- `main.go` configures `inertiajs.New` and returns `inertiajs.Render(...)` from page handlers.
 - `templates/app.html` is the root Inertia template served by Go.
 - `frontend/src/main.tsx` boots the React Inertia app from the embedded page JSON.

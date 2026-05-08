@@ -1,4 +1,4 @@
-package codec
+package inertiajs
 
 import (
 	"encoding/json"
@@ -106,18 +106,21 @@ func WithPageVersion(version any) PageOption {
 	}
 }
 
+// WithEncryptHistory configures Inertia encrypted history for the page.
 func WithEncryptHistory(enabled bool) PageOption {
 	return func(o *pageOptions) {
 		o.encryptHistory = enabled
 	}
 }
 
+// WithClearHistory configures whether Inertia should clear browser history.
 func WithClearHistory(enabled bool) PageOption {
 	return func(o *pageOptions) {
 		o.clearHistory = enabled
 	}
 }
 
+// WithPreserveFragment configures whether Inertia should preserve the URL fragment.
 func WithPreserveFragment(enabled bool) PageOption {
 	return func(o *pageOptions) {
 		o.preserveFragment = enabled
@@ -148,60 +151,65 @@ type TemplateData struct {
 	Request  *http.Request
 }
 
-type inertiaOptions struct {
+type codecOptions struct {
 	templateName     string
 	assetVersion     any
 	assetVersionFunc func(*http.Request) (any, error)
 }
 
-// InertiaOption configures an Inertiajs codec.
-type InertiaOption func(*inertiaOptions)
+// Option configures a Codec.
+type Option func(*codecOptions)
 
-func WithTemplateName(name string) InertiaOption {
-	return func(o *inertiaOptions) {
+// WithTemplateName selects the template name used for the initial HTML shell.
+func WithTemplateName(name string) Option {
+	return func(o *codecOptions) {
 		o.templateName = name
 	}
 }
 
-func WithAssetVersion(version any) InertiaOption {
-	return func(o *inertiaOptions) {
+// WithAssetVersion sets the asset version included in Inertia page objects.
+func WithAssetVersion(version any) Option {
+	return func(o *codecOptions) {
 		o.assetVersion = version
 	}
 }
 
-func WithAssetVersionFunc(fn func(*http.Request) (any, error)) InertiaOption {
-	return func(o *inertiaOptions) {
+// WithAssetVersionFunc sets a request-aware asset version provider.
+func WithAssetVersionFunc(fn func(*http.Request) (any, error)) Option {
+	return func(o *codecOptions) {
 		o.assetVersionFunc = fn
 	}
 }
 
-type Inertiajs struct {
+// Codec renders Inertia.js page responses.
+type Codec struct {
 	template *template.Template
-	options  inertiaOptions
+	options  codecOptions
 }
 
-func NewInertiajs(tmpl *template.Template, opts ...InertiaOption) *Inertiajs {
-	options := inertiaOptions{}
+// New creates an Inertia.js codec.
+func New(tmpl *template.Template, opts ...Option) *Codec {
+	options := codecOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return &Inertiajs{
+	return &Codec{
 		template: tmpl,
 		options:  options,
 	}
 }
 
-func (c *Inertiajs) Name() string {
+func (c *Codec) Name() string {
 	return "inertiajs"
 }
 
-func (c *Inertiajs) Encode(w http.ResponseWriter, r *http.Request, v any) error {
+func (c *Codec) Encode(w http.ResponseWriter, r *http.Request, v any) error {
 	return c.WritePage(w, r, v, 0)
 }
 
 // WritePage writes an Inertia page with an explicit HTTP status.
-func (c *Inertiajs) WritePage(w http.ResponseWriter, r *http.Request, v any, status int) error {
-	if isNil(v) {
+func (c *Codec) WritePage(w http.ResponseWriter, r *http.Request, v any, status int) error {
+	if v == nil || c.isPointerResponse(v) {
 		return tanukirpc.ErrResponseNotSupportedAtThisCodec
 	}
 	page, ok := v.(pageResponse)
@@ -215,15 +223,15 @@ func (c *Inertiajs) WritePage(w http.ResponseWriter, r *http.Request, v any, sta
 	return c.writePageObject(w, r, po, status)
 }
 
-func (c *Inertiajs) Decode(r *http.Request, v any) error {
+func (c *Codec) Decode(r *http.Request, v any) error {
 	return tanukirpc.ErrRequestNotSupportedAtThisCodec
 }
 
-func (c *Inertiajs) normalize(r *http.Request, page rawPage) (PageObject, error) {
+func (c *Codec) normalize(r *http.Request, page rawPage) (PageObject, error) {
 	if page.Component == "" {
 		return PageObject{}, errors.New("inertia component is required")
 	}
-	props, err := normalizeProps(page.Props)
+	props, err := c.normalizeProps(page.Props)
 	if err != nil {
 		return PageObject{}, err
 	}
@@ -249,7 +257,7 @@ func (c *Inertiajs) normalize(r *http.Request, page rawPage) (PageObject, error)
 	}, nil
 }
 
-func (c *Inertiajs) assetVersion(r *http.Request) (any, error) {
+func (c *Codec) assetVersion(r *http.Request) (any, error) {
 	if c == nil {
 		return nil, nil
 	}
@@ -259,9 +267,9 @@ func (c *Inertiajs) assetVersion(r *http.Request) (any, error) {
 	return c.options.assetVersion, nil
 }
 
-func (c *Inertiajs) writePageObject(w http.ResponseWriter, r *http.Request, page PageObject, status int) error {
-	appendVary(w.Header(), inertiaHeader)
-	if isInertiaRequest(r) {
+func (c *Codec) writePageObject(w http.ResponseWriter, r *http.Request, page PageObject, status int) error {
+	c.appendVary(w.Header())
+	if c.isRequest(r) {
 		w.Header().Set("Content-Type", inertiaContentType)
 		w.Header().Set(inertiaHeader, inertiaHeaderValue)
 		if status != 0 {
@@ -291,10 +299,7 @@ func (c *Inertiajs) writePageObject(w http.ResponseWriter, r *http.Request, page
 	return c.template.Execute(w, data)
 }
 
-func normalizeProps(props any) (map[string]any, error) {
-	if props == nil {
-		return map[string]any{"errors": map[string]any{}}, nil
-	}
+func (c *Codec) normalizeProps(props any) (map[string]any, error) {
 	raw, err := json.Marshal(props)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal inertia props: %w", err)
@@ -312,17 +317,56 @@ func normalizeProps(props any) (map[string]any, error) {
 	return values, nil
 }
 
+func (*Codec) isPointerResponse(v any) bool {
+	rv := reflect.ValueOf(v)
+	return rv.IsValid() && rv.Kind() == reflect.Pointer
+}
+
+func (*Codec) isRequest(r *http.Request) bool {
+	return r.Header.Get(inertiaHeader) == inertiaHeaderValue
+}
+
+func (c *Codec) shouldHandleError(req *http.Request) bool {
+	if c.isRequest(req) {
+		return true
+	}
+	for _, accept := range strings.Split(req.Header.Get("Accept"), ",") {
+		if strings.TrimSpace(strings.Split(accept, ";")[0]) == "text/html" {
+			return true
+		}
+	}
+	return false
+}
+
+func (*Codec) appendVary(header http.Header) {
+	current := header.Get(inertiaVaryHeader)
+	if current == "" {
+		header.Set(inertiaVaryHeader, inertiaHeader)
+		return
+	}
+	for _, part := range strings.Split(current, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), inertiaHeader) {
+			return
+		}
+	}
+	header.Set(inertiaVaryHeader, current+", "+inertiaHeader)
+}
+
+// ErrorPageFunc builds an Inertia error page for the given error and status.
 type ErrorPageFunc func(req *http.Request, err error, status int) Page[map[string]any]
 
+// ErrorHookerOption configures an Inertia-aware error hooker.
 type ErrorHookerOption func(*inertiaErrorHooker)
 
+// WithFallbackErrorHooker sets the error hooker used for non-Inertia errors or write failures.
 func WithFallbackErrorHooker(fallback tanukirpc.ErrorHooker) ErrorHookerOption {
 	return func(h *inertiaErrorHooker) {
 		h.fallback = fallback
 	}
 }
 
-func NewInertiaErrorHooker(ic *Inertiajs, errorPage ErrorPageFunc, opts ...ErrorHookerOption) tanukirpc.ErrorHooker {
+// NewErrorHooker creates an error hooker that can render Inertia error pages.
+func NewErrorHooker(ic *Codec, errorPage ErrorPageFunc, opts ...ErrorHookerOption) tanukirpc.ErrorHooker {
 	h := &inertiaErrorHooker{
 		codec:     ic,
 		errorPage: errorPage,
@@ -335,13 +379,13 @@ func NewInertiaErrorHooker(ic *Inertiajs, errorPage ErrorPageFunc, opts ...Error
 }
 
 type inertiaErrorHooker struct {
-	codec     *Inertiajs
+	codec     *Codec
 	errorPage ErrorPageFunc
 	fallback  tanukirpc.ErrorHooker
 }
 
 func (h *inertiaErrorHooker) OnError(w http.ResponseWriter, req *http.Request, logger *slog.Logger, codec tanukirpc.Codec, err error) {
-	if !shouldHandleInertiaError(req) || h.codec == nil {
+	if h.codec == nil || !h.codec.shouldHandleError(req) {
 		h.fallback.OnError(w, req, logger, codec, err)
 		return
 	}
@@ -359,7 +403,7 @@ func (h *inertiaErrorHooker) OnError(w http.ResponseWriter, req *http.Request, l
 	}
 	errorPage := h.errorPage
 	if errorPage == nil {
-		errorPage = defaultInertiaErrorPage
+		errorPage = h.defaultErrorPage
 	}
 	if writeErr := h.codec.WritePage(w, req, errorPage(req, err, status), status); writeErr != nil {
 		logger.ErrorContext(req.Context(), "failed to encode inertia error response", slog.Any("error", writeErr))
@@ -367,7 +411,7 @@ func (h *inertiaErrorHooker) OnError(w http.ResponseWriter, req *http.Request, l
 	}
 }
 
-func defaultInertiaErrorPage(_ *http.Request, err error, status int) Page[map[string]any] {
+func (*inertiaErrorHooker) defaultErrorPage(_ *http.Request, err error, status int) Page[map[string]any] {
 	return Render("Error", map[string]any{
 		"status":  status,
 		"message": err.Error(),
@@ -391,48 +435,5 @@ func (defaultErrorHooker) OnError(w http.ResponseWriter, req *http.Request, logg
 	}
 	if encodeErr := codec.Encode(w, req, tanukirpc.ErrorMessage{Error: tanukirpc.ErrorBody{Message: err.Error()}}); encodeErr != nil {
 		logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("error", encodeErr))
-	}
-}
-
-func isInertiaRequest(r *http.Request) bool {
-	return r.Header.Get(inertiaHeader) == inertiaHeaderValue
-}
-
-func shouldHandleInertiaError(r *http.Request) bool {
-	if isInertiaRequest(r) {
-		return true
-	}
-	for _, accept := range strings.Split(r.Header.Get("Accept"), ",") {
-		if strings.TrimSpace(strings.Split(accept, ";")[0]) == "text/html" {
-			return true
-		}
-	}
-	return false
-}
-
-func appendVary(header http.Header, value string) {
-	current := header.Get(inertiaVaryHeader)
-	if current == "" {
-		header.Set(inertiaVaryHeader, value)
-		return
-	}
-	for _, part := range strings.Split(current, ",") {
-		if strings.EqualFold(strings.TrimSpace(part), value) {
-			return
-		}
-	}
-	header.Set(inertiaVaryHeader, current+", "+value)
-}
-
-func isNil(v any) bool {
-	if v == nil {
-		return true
-	}
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return rv.IsNil()
-	default:
-		return false
 	}
 }

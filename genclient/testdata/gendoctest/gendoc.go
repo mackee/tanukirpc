@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/mackee/tanukirpc"
-	"github.com/mackee/tanukirpc/codec"
+	"github.com/mackee/tanukirpc/codec/inertiajs"
 	"github.com/mackee/tanukirpc/genclient"
 )
 
@@ -45,8 +45,8 @@ func testGendoc() {
 		Title string `json:"title"`
 	}
 	router.Get("/dashboard", tanukirpc.NewHandler(
-		func(ctx tanukirpc.Context[struct{}], _ struct{}) (codec.Page[dashboardProps], error) {
-			return codec.Render("Dashboard", dashboardProps{Title: "Dashboard"}), nil
+		func(ctx tanukirpc.Context[struct{}], _ struct{}) (inertiajs.Page[dashboardProps], error) {
+			return inertiajs.Render("Dashboard", dashboardProps{Title: "Dashboard"}), nil
 		},
 	))
 

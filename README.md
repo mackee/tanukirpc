@@ -360,29 +360,29 @@ router.Route("/auth", func(router *tanukirpc.Router[*Registry]) {
 
 ### Inertia.js support
 
-`tanukirpc` provides an opt-in Inertia.js codec in the `github.com/mackee/tanukirpc/codec` package. It is not enabled by default, so API-only applications keep the default JSON/form/raw-body behavior.
+`tanukirpc` provides an opt-in Inertia.js codec in the `github.com/mackee/tanukirpc/codec/inertiajs` package. It is not enabled by default, so API-only applications keep the default JSON/form/raw-body behavior.
 
-Inertia handlers return a typed `codec.Page[T]` response. The codec writes the initial HTML shell for normal browser requests and writes the Inertia page JSON when the request includes `X-Inertia: true`.
+Inertia handlers return a typed `inertiajs.Page[T]` response. The codec writes the initial HTML shell for normal browser requests and writes the Inertia page JSON when the request includes `X-Inertia: true`.
 
 ```go
 tmpl := template.Must(template.ParseFiles("templates/app.html"))
-inertia := codec.NewInertiajs(tmpl, codec.WithAssetVersion("dev"))
+inertia := inertiajs.New(tmpl, inertiajs.WithAssetVersion("dev"))
 
 router := tanukirpc.NewRouter(
     registry,
-    tanukirpc.WithCodec(tanukirpc.CodecList{
+    tanukirpc.WithCodec[*Registry](tanukirpc.CodecList{
         inertia,
         tanukirpc.DefaultCodecList,
     }),
-    tanukirpc.WithErrorHooker(codec.NewInertiaErrorHooker(inertia, nil)),
+    tanukirpc.WithErrorHooker[*Registry](inertiajs.NewErrorHooker(inertia, nil)),
 )
 
 type HomeProps struct {
     Message string `json:"message"`
 }
 
-func homeHandler(ctx tanukirpc.Context[*Registry], req struct{}) (codec.Page[HomeProps], error) {
-    return codec.Render("Home", HomeProps{Message: "Hello from Inertia.js"}), nil
+func homeHandler(ctx tanukirpc.Context[*Registry], req struct{}) (inertiajs.Page[HomeProps], error) {
+    return inertiajs.Render("Home", HomeProps{Message: "Hello from Inertia.js"}), nil
 }
 ```
 

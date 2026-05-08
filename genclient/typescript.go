@@ -271,7 +271,7 @@ func (t *typeScriptClientGenerator) inertiaPageTypeInfo(tt types.Type, tagFilter
 		return nil, false, nil
 	}
 	obj := nt.Obj()
-	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "github.com/mackee/tanukirpc/codec" || obj.Name() != "Page" {
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "github.com/mackee/tanukirpc/codec/inertiajs" || obj.Name() != "Page" {
 		return nil, false, nil
 	}
 	args := nt.TypeArgs()

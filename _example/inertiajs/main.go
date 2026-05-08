@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/mackee/tanukirpc"
-	"github.com/mackee/tanukirpc/codec"
+	"github.com/mackee/tanukirpc/codec/inertiajs"
 )
 
 //go:embed templates/app.html
@@ -59,7 +59,7 @@ func NewRegistry() *Registry {
 		tasks:  map[string]*Task{},
 	}
 	reg.createTask("Read the protocol", "Start from the Inertia page object and headers.", StatusDone)
-	reg.createTask("Return a typed Page", "Handlers return codec.Render(component, props).", StatusDoing)
+	reg.createTask("Return a typed Page", "Handlers return inertiajs.Render(component, props).", StatusDoing)
 	reg.createTask("Try client navigation", "Use the links to move without full page reloads.", StatusTodo)
 	return reg
 }
@@ -147,14 +147,14 @@ func NewRouter(reg *Registry) (*tanukirpc.Router[*Registry], error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse inertia template: %w", err)
 	}
-	inertia := codec.NewInertiajs(tmpl, codec.WithAssetVersion("dev"))
+	inertia := inertiajs.New(tmpl, inertiajs.WithAssetVersion("dev"))
 	router := tanukirpc.NewRouter(
 		reg,
 		tanukirpc.WithCodec[*Registry](tanukirpc.CodecList{
 			inertia,
 			tanukirpc.DefaultCodecList,
 		}),
-		tanukirpc.WithErrorHooker[*Registry](codec.NewInertiaErrorHooker(inertia, inertiaErrorPage)),
+		tanukirpc.WithErrorHooker[*Registry](inertiajs.NewErrorHooker(inertia, inertiaErrorPage)),
 	)
 	router.Use(normalizeContentType)
 	router.Get("/", tanukirpc.NewHandler(homeHandler))
@@ -182,8 +182,8 @@ type HomeProps struct {
 	TaskCount   int    `json:"taskCount"`
 }
 
-func homeHandler(ctx tanukirpc.Context[*Registry], _ struct{}) (codec.Page[HomeProps], error) {
-	return codec.Render("Home", HomeProps{
+func homeHandler(ctx tanukirpc.Context[*Registry], _ struct{}) (inertiajs.Page[HomeProps], error) {
+	return inertiajs.Render("Home", HomeProps{
 		ProjectName: "tanukirpc + Inertia.js",
 		TaskCount:   len(ctx.Registry().listTasks()),
 	}), nil
@@ -193,8 +193,8 @@ type TasksIndexProps struct {
 	Tasks []TaskView `json:"tasks"`
 }
 
-func tasksIndexHandler(ctx tanukirpc.Context[*Registry], _ struct{}) (codec.Page[TasksIndexProps], error) {
-	return codec.Render("Tasks/Index", TasksIndexProps{
+func tasksIndexHandler(ctx tanukirpc.Context[*Registry], _ struct{}) (inertiajs.Page[TasksIndexProps], error) {
+	return inertiajs.Render("Tasks/Index", TasksIndexProps{
 		Tasks: ctx.Registry().listTasks(),
 	}), nil
 }
@@ -207,12 +207,12 @@ type TaskShowProps struct {
 	Task TaskView `json:"task"`
 }
 
-func taskShowHandler(ctx tanukirpc.Context[*Registry], req TaskShowRequest) (codec.Page[TaskShowProps], error) {
+func taskShowHandler(ctx tanukirpc.Context[*Registry], req TaskShowRequest) (inertiajs.Page[TaskShowProps], error) {
 	task, ok := ctx.Registry().findTask(req.ID)
 	if !ok {
-		return codec.Page[TaskShowProps]{}, tanukirpc.WrapErrorWithStatus(http.StatusNotFound, fmt.Errorf("task %s not found", req.ID))
+		return inertiajs.Page[TaskShowProps]{}, tanukirpc.WrapErrorWithStatus(http.StatusNotFound, fmt.Errorf("task %s not found", req.ID))
 	}
-	return codec.Render("Tasks/Show", TaskShowProps{Task: task}), nil
+	return inertiajs.Render("Tasks/Show", TaskShowProps{Task: task}), nil
 }
 
 type CreateTaskRequest struct {
@@ -230,8 +230,8 @@ func createTaskHandler(ctx tanukirpc.Context[*Registry], req CreateTaskRequest) 
 	return nil, tanukirpc.ErrorRedirectTo(http.StatusSeeOther, "/tasks")
 }
 
-func inertiaErrorPage(_ *http.Request, err error, status int) codec.Page[map[string]any] {
-	return codec.Render("Error", map[string]any{
+func inertiaErrorPage(_ *http.Request, err error, status int) inertiajs.Page[map[string]any] {
+	return inertiajs.Render("Error", map[string]any{
 		"message": err.Error(),
 		"status":  status,
 	})

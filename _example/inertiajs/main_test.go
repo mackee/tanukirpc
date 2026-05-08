@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mackee/tanukirpc/codec"
+	"github.com/mackee/tanukirpc/codec/inertiajs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -105,12 +105,12 @@ func newTestRouter(t *testing.T) http.Handler {
 	return router
 }
 
-func decodePage(t *testing.T, w *httptest.ResponseRecorder) codec.PageObject {
+func decodePage(t *testing.T, w *httptest.ResponseRecorder) inertiajs.PageObject {
 	t.Helper()
 	assert.Equal(t, "application/json", w.Result().Header.Get("Content-Type"))
 	assert.Equal(t, "true", w.Result().Header.Get("X-Inertia"))
 	assert.Equal(t, "X-Inertia", w.Result().Header.Get("Vary"))
-	var page codec.PageObject
+	var page inertiajs.PageObject
 	require.NoError(t, json.NewDecoder(w.Result().Body).Decode(&page))
 	return page
 }

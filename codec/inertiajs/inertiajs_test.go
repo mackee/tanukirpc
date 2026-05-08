@@ -1,4 +1,4 @@
-package codec
+package inertiajs
 
 import (
 	"encoding/json"
@@ -22,7 +22,7 @@ type inertiaTestProps struct {
 }
 
 func TestInertiajsEncodeJSONPage(t *testing.T) {
-	codec := NewInertiajs(nil, WithAssetVersion("asset-v1"))
+	codec := New(nil, WithAssetVersion("asset-v1"))
 	req := httptest.NewRequest(http.MethodGet, "/users?page=2", nil)
 	req.Header.Set("X-Inertia", "true")
 	w := httptest.NewRecorder()
@@ -51,7 +51,7 @@ func TestInertiajsEncodeJSONPage(t *testing.T) {
 
 func TestInertiajsEncodeJSONPageWithPageOptions(t *testing.T) {
 	called := false
-	codec := NewInertiajs(nil, WithAssetVersionFunc(func(req *http.Request) (any, error) {
+	codec := New(nil, WithAssetVersionFunc(func(req *http.Request) (any, error) {
 		called = true
 		return "asset-v1", nil
 	}))
@@ -81,7 +81,7 @@ func TestInertiajsEncodeJSONPageWithPageOptions(t *testing.T) {
 }
 
 func TestInertiajsUsesAssetVersionFunc(t *testing.T) {
-	codec := NewInertiajs(nil, WithAssetVersionFunc(func(req *http.Request) (any, error) {
+	codec := New(nil, WithAssetVersionFunc(func(req *http.Request) (any, error) {
 		return req.Header.Get("X-Asset-Version"), nil
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
@@ -99,7 +99,7 @@ func TestInertiajsUsesAssetVersionFunc(t *testing.T) {
 
 func TestInertiajsEncodeHTMLPage(t *testing.T) {
 	tmpl := template.Must(template.New("app").Parse(`<main>{{ .Page.Component }}</main><script type="application/json" data-page>{{ .PageJSON }}</script>`))
-	codec := NewInertiajs(tmpl)
+	codec := New(tmpl)
 	req := httptest.NewRequest(http.MethodGet, "/danger", nil)
 	w := httptest.NewRecorder()
 
@@ -123,7 +123,7 @@ func TestInertiajsEncodeHTMLPage(t *testing.T) {
 
 func TestInertiajsEncodeHTMLPageWithTemplateName(t *testing.T) {
 	tmpl := template.Must(template.New("root").Parse(`{{ define "app" }}selected:{{ .Page.Component }}{{ end }}{{ define "other" }}wrong{{ end }}`))
-	codec := NewInertiajs(tmpl, WithTemplateName("app"))
+	codec := New(tmpl, WithTemplateName("app"))
 	req := httptest.NewRequest(http.MethodGet, "/named", nil)
 	w := httptest.NewRecorder()
 
@@ -136,7 +136,8 @@ func TestInertiajsEncodeHTMLPageWithTemplateName(t *testing.T) {
 }
 
 func TestNormalizePropsPreservesErrors(t *testing.T) {
-	props, err := normalizeProps(map[string]any{
+	codec := New(nil)
+	props, err := codec.normalizeProps(map[string]any{
 		"errors": map[string]any{"name": "required"},
 		"name":   "tanuki",
 	})
@@ -147,13 +148,32 @@ func TestNormalizePropsPreservesErrors(t *testing.T) {
 }
 
 func TestNormalizePropsRejectsNonObject(t *testing.T) {
-	_, err := normalizeProps([]string{"not", "object"})
+	codec := New(nil)
+	_, err := codec.normalizeProps([]string{"not", "object"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JSON object")
+}
+
+func TestNormalizePropsRejectsNilProps(t *testing.T) {
+	codec := New(nil)
+
+	_, err := codec.normalizeProps(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JSON object")
+
+	var ptr *inertiaTestProps
+	_, err = codec.normalizeProps(ptr)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JSON object")
+
+	var m map[string]any
+	_, err = codec.normalizeProps(m)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "JSON object")
 }
 
 func TestInertiajsIgnoresDecodeAndNonPageResponse(t *testing.T) {
-	codec := NewInertiajs(nil)
+	codec := New(nil)
 	req := httptest.NewRequest(http.MethodGet, "/", strings.NewReader(""))
 
 	assert.ErrorIs(t, codec.Decode(req, &struct{}{}), tanukirpc.ErrRequestNotSupportedAtThisCodec)
@@ -162,9 +182,21 @@ func TestInertiajsIgnoresDecodeAndNonPageResponse(t *testing.T) {
 	}{Message: "ok"}), tanukirpc.ErrResponseNotSupportedAtThisCodec)
 }
 
+func TestInertiajsRejectsPointerPageResponse(t *testing.T) {
+	codec := New(nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+
+	page := Render("Dashboard", map[string]any{})
+	assert.ErrorIs(t, codec.Encode(httptest.NewRecorder(), req, &page), tanukirpc.ErrResponseNotSupportedAtThisCodec)
+
+	var nilPage *Page[map[string]any]
+	assert.ErrorIs(t, codec.Encode(httptest.NewRecorder(), req, nilPage), tanukirpc.ErrResponseNotSupportedAtThisCodec)
+}
+
 func TestInertiajsCodecListFallsThroughToDefaultCodecs(t *testing.T) {
 	codecList := tanukirpc.CodecList{
-		NewInertiajs(nil),
+		New(nil),
 		tanukirpc.NewJSONCodec(),
 	}
 
@@ -200,8 +232,8 @@ func TestInertiajsCodecListFallsThroughToDefaultCodecs(t *testing.T) {
 }
 
 func TestInertiaErrorHookerWritesInertiaErrorPage(t *testing.T) {
-	codec := NewInertiajs(nil)
-	hooker := NewInertiaErrorHooker(codec, func(req *http.Request, err error, status int) Page[map[string]any] {
+	codec := New(nil)
+	hooker := NewErrorHooker(codec, func(req *http.Request, err error, status int) Page[map[string]any] {
 		return Render("Errors/Show", map[string]any{
 			"message": err.Error(),
 			"status":  status,
@@ -229,8 +261,8 @@ func TestInertiaErrorHookerWritesInertiaErrorPage(t *testing.T) {
 
 func TestInertiaErrorHookerWritesHTMLErrorPage(t *testing.T) {
 	tmpl := template.Must(template.New("app").Parse(`<h1>{{ .Page.Component }}</h1><span>{{ index .Page.Props "status" }}</span>`))
-	codec := NewInertiajs(tmpl)
-	hooker := NewInertiaErrorHooker(codec, func(req *http.Request, err error, status int) Page[map[string]any] {
+	codec := New(tmpl)
+	hooker := NewErrorHooker(codec, func(req *http.Request, err error, status int) Page[map[string]any] {
 		return Render("Errors/HTML", map[string]any{
 			"message": err.Error(),
 			"status":  status,
