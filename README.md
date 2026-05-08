@@ -365,6 +365,13 @@ router.Route("/auth", func(router *tanukirpc.Router[*Registry]) {
 Inertia handlers return a typed `inertiajs.Page[T]` response. The codec writes the initial HTML shell for normal browser requests and writes the Inertia page JSON when the request includes `X-Inertia: true`.
 
 ```go
+import (
+    "html/template"
+
+    "github.com/mackee/tanukirpc"
+    "github.com/mackee/tanukirpc/codec/inertiajs"
+)
+
 tmpl := template.Must(template.ParseFiles("templates/app.html"))
 inertia := inertiajs.New(tmpl, inertiajs.WithAssetVersion("dev"))
 
