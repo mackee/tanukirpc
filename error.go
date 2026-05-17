@@ -68,6 +68,19 @@ type ErrorBody struct {
 	Message string `json:"message"`
 }
 
+// ErrorBodyMarshaler builds the inner error body from a handler error.
+// The returned value is encoded as the "error" field of the response body
+// (i.e. the wire shape is {"error": <E>}). Used together with WithErrorBody.
+type ErrorBodyMarshaler[E any] func(err error) E
+
+// errorEnvelope is the on-the-wire shape of the error response body when a
+// custom marshaler is registered via WithErrorBody. The default codec writes
+// the marshaler's return value as the "error" field, preserving the same
+// envelope structure as the default ErrorMessage.
+type errorEnvelope struct {
+	Error any `json:"error"`
+}
+
 type ErrorHooker interface {
 	OnError(w http.ResponseWriter, req *http.Request, logger *slog.Logger, codec Codec, err error)
 }
@@ -77,7 +90,13 @@ func DefaultErrorHooker() ErrorHooker {
 	return &errorHooker{}
 }
 
-type errorHooker struct{}
+type errorHooker struct {
+	marshalBody func(err error) any
+}
+
+func newErrorHookerWithMarshaler(m func(err error) any) ErrorHooker {
+	return &errorHooker{marshalBody: m}
+}
 
 func (e *errorHooker) OnError(w http.ResponseWriter, req *http.Request, logger *slog.Logger, codec Codec, err error) {
 	if ewr, ok := errors.AsType[ErrorWithRedirect](err); ok {
@@ -88,9 +107,15 @@ func (e *errorHooker) OnError(w http.ResponseWriter, req *http.Request, logger *
 		w.WriteHeader(ews.Status())
 	} else {
 		w.WriteHeader(http.StatusInternalServerError)
-		logger.ErrorContext(req.Context(), "ocurred internal server error", slog.Any("error", err))
+		logger.ErrorContext(req.Context(), "occurred internal server error", slog.Any("error", err))
 	}
-	if err := codec.Encode(w, req, ErrorMessage{Error: ErrorBody{Message: err.Error()}}); err != nil {
+	var body any
+	if e.marshalBody != nil {
+		body = errorEnvelope{Error: e.marshalBody(err)}
+	} else {
+		body = ErrorMessage{Error: ErrorBody{Message: err.Error()}}
+	}
+	if err := codec.Encode(w, req, body); err != nil {
 		logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("error", err))
 	}
 }
