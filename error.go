@@ -107,7 +107,7 @@ func (e *errorHooker) OnError(w http.ResponseWriter, req *http.Request, logger *
 		w.WriteHeader(ews.Status())
 	} else {
 		w.WriteHeader(http.StatusInternalServerError)
-		logger.ErrorContext(req.Context(), "ocurred internal server error", slog.Any("error", err))
+		logger.ErrorContext(req.Context(), "occurred internal server error", slog.Any("error", err))
 	}
 	var body any
 	if e.marshalBody != nil {
