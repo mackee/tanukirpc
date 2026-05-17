@@ -192,6 +192,143 @@ func redirectHandler(ctx tanukirpc.Context[struct{}], struct{}) (*struct{}, erro
 }
 ```
 
+#### Customizing the error response body
+
+By default the error response body is `tanukirpc.ErrorMessage` (`{"error": {"message": string}}`). Branching on the free-form `message` string is fragile: any wording change on the server (refactor, i18n, additional context) silently breaks the client. `WithErrorBody` lets a project define its own error body type that is emitted on both the Go side and in the generated TypeScript client, so frontends can discriminate errors via typed fields (HTTP status, application code, ...).
+
+##### Go-side API
+
+```go
+// A function the user supplies to build the inner error body from an error.
+type ErrorBodyMarshaler[E any] func(err error) E
+
+// Register the custom body type and how to build it.
+//
+//   - E is the Go struct that will be encoded as the inner error body.
+//     Its json tags drive both the runtime encoding and the TypeScript
+//     type emitted by gentypescript.
+//   - The marshaler is invoked by the default ErrorHooker. It receives the
+//     handler error (possibly wrapped via WrapErrorWithStatus) and returns
+//     the value to encode.
+//   - The router still resolves the HTTP status via ErrorWithStatus /
+//     ErrorWithRedirect exactly as today; only the response body changes.
+func WithErrorBody[Reg any, E any](marshaler ErrorBodyMarshaler[E]) RouterOption[Reg]
+```
+
+Usage:
+
+```go
+type ErrorBody struct {
+    Message string `json:"message"`
+    Status  int    `json:"status"`
+    Code    string `json:"code,omitempty"`
+}
+
+func buildErrorBody(err error) ErrorBody {
+    body := ErrorBody{Message: err.Error(), Status: http.StatusInternalServerError}
+    var ews tanukirpc.ErrorWithStatus
+    if errors.As(err, &ews) {
+        body.Status = ews.Status()
+    }
+    var coded interface{ Code() string }
+    if errors.As(err, &coded) {
+        body.Code = coded.Code()
+    }
+    return body
+}
+
+// E is inferred from the marshaler; only Reg needs to be specified.
+r := tanukirpc.NewRouter(
+    registry,
+    tanukirpc.WithErrorBody[*Registry](buildErrorBody),
+)
+```
+
+The response body wire shape is `{"error": <E>}` (the same `error` envelope as the default `tanukirpc.ErrorMessage`, with the inner body replaced by your type).
+
+Notes:
+
+- When `WithErrorBody` is **not** used, the default `ErrorHooker` encodes `tanukirpc.ErrorMessage` exactly as before.
+- `WithErrorBody` and `WithErrorHooker` install the hooker on the same slot. The later option wins, so pass `WithErrorHooker` after `WithErrorBody` if you need to fully take over error rendering.
+
+##### gentypescript-side
+
+`gentypescript` automatically picks up the type registered via `WithErrorBody` from the `tanukirpc.NewRouter` call that produced the analyzed router. No extra option is required.
+
+Resulting `client.ts` shape:
+
+```ts
+export type ErrorResponse = {
+  error: {
+    message: string;
+    status: number;
+    code?: string;
+  };
+};
+
+type apiSchemaCollection = {
+  "GET /ping": {
+    // ...
+    Response: { /* ... */ } | ErrorResponse;
+  };
+};
+
+export const isErrorResponse = (response: unknown): response is ErrorResponse => {
+  const e = (response as { error?: unknown })?.error;
+  return (
+    typeof (e as { message?: unknown })?.message === "string" &&
+    typeof (e as { status?: unknown })?.status === "number"
+  );
+};
+```
+
+The `isErrorResponse` predicate is derived from the registered struct: every primitive (string/number/boolean) json field that lacks `omitempty` becomes part of the narrowing check. Optional or non-primitive fields are ignored. When no custom body is registered, the existing `!!(response as { error: unknown })?.error` check is preserved.
+
+##### Analyzer reach and limitations
+
+The analyzer tracks the router value handed to `genclient.AnalyzeTarget` back to a `tanukirpc.NewRouter` call and classifies every `RouterOption` argument. The following patterns are recognized as long as the relevant code lives in the analyzed package:
+
+- `tanukirpc.WithErrorBody[Reg](marshaler)` passed directly to `NewRouter`
+- Router built by a same-package factory (`func newAppRouter() *tanukirpc.Router[Reg] { return tanukirpc.NewRouter(reg, tanukirpc.WithErrorBody[Reg](...)) }`)
+- Options assembled by a helper and spread: `tanukirpc.NewRouter(reg, buildOptions()...)` (also when the helper is generic: `tanukirpc.NewRouter(reg, buildOptions[Reg]()...)`)
+- Wrappers that return a `RouterOption[Reg]`: `func appErrorBody[Reg any]() tanukirpc.RouterOption[Reg] { return tanukirpc.WithErrorBody[Reg](...) }` passed to `NewRouter`
+- Last-wins option order: a `WithErrorHooker` placed after `WithErrorBody` resets the generated client back to the default `{ error: { message: string } }` shape, matching `Router.apply` precedence
+
+When an option cannot be statically classified — for example a `RouterOption` loaded from a package-level variable, chosen via `if/else` (`*ssa.Phi`), assembled with `append`, returned by a helper in **another package** the analyzer cannot follow, or a `...`-spread of any of those — `gentypescript` emits a diagnostic at the option site:
+
+```
+gentypescript: could not statically determine whether this RouterOption configures the error response body; the generated TypeScript ErrorResponse type may not match runtime behavior
+```
+
+The same warning is emitted when a same-package router factory, `RouterOption` wrapper, or `buildOptions(flag)...` spread helper has multiple return paths whose error-rendering choices disagree (e.g. one branch returns `WithErrorBody`, another returns the default or a `WithErrorHooker`). In that case the generated client still optimistically advertises the `ErrorResponse` type from the branch that has one — runtime may not match if the other branch fires — so the warning is your signal to reconcile the construction site.
+
+`genclient.AnalyzeTarget` may be called at most once per analyzed package. A single generated `client.ts` can only represent one router's routes and one error body, so if the analyzer finds more than one `AnalyzeTarget` call it emits an error diagnostic at each call site and skips generation. Move the routers into separate packages (each with its own `go:generate` line and output path) when you need typed clients for both.
+
+Further shapes of the registered error body type are validated separately.
+
+The generator emits a **warning** when:
+
+- The error body type is a pointer (`func build(err error) *ErrorBody`). `encoding/json` can emit `{"error": null}` for a nil pointer, but the generated `ErrorResponse` type is not nullable. Use a struct value (`func build(err error) ErrorBody`) instead.
+- The error body struct has an exported field without a `json` tag. `encoding/json` would emit it under its Go name, but the generated TypeScript `ErrorResponse` only includes fields with explicit json tags. Add a tag (or rename) so the generated client matches the wire format.
+- The error body struct has an **embedded** field. `encoding/json` flattens embedded struct fields into the parent object at runtime, but `gentypescript` does not represent them in the generated TypeScript `ErrorResponse`. Replace the embedding with explicit json-tagged fields so the generated client matches the wire format.
+- The error body struct has an **unexported** field with a `json` tag (e.g. `message string \`json:"message"\``). `encoding/json` drops unexported fields at runtime regardless of the tag, so the generated TypeScript would advertise a field that never appears on the wire. Export the field (capitalize the name) so the tag actually takes effect.
+
+The generator **refuses to generate** a client (emits an error diagnostic and produces no output) when:
+
+- The error body struct has no json-tagged fields that the generator can render (an empty struct, a struct whose fields all lack json tags or use `json:"-"`, a struct that only contains embedded fields, or a struct whose only json-tagged fields are unexported). `encoding/json` would still emit `{"error":{}}` at runtime, but the resulting TypeScript `ErrorResponse` shape would be impossible for clients to satisfy. Add at least one exported, explicit json-tagged field.
+
+`r.With(...)` and `r.Route(...)` chains preserve the parent router's error hooker at runtime, so passing the chained router to `AnalyzeTarget` still picks up `WithErrorBody` registered on the parent. Other router-typed values that the analyzer cannot trace back to a `NewRouter` call (a `*ssa.Phi` from an `if/else`, an `*ssa.Extract` from a multi-return helper, a function parameter, etc.) produce the same warning as unresolved options — the generated client falls back to the default error shape unless the construction is simplified.
+
+**Per-route error bodies via `RouteWithTransformer` are not supported.** `WithErrorBody` is a `RouterOption[Reg]` and is only meant to be passed to `NewRouter`. Manually invoking it on the inner `*Router[Reg2]` inside a `RouteWithTransformer` callback — e.g. `tanukirpc.WithErrorBody[Reg2](build)(innerRouter)` — does change the inner router's hooker at runtime, but the generated TypeScript can only carry one project-wide `ErrorResponse`, so routes registered inside the transformer block will still be typed against the outer router's error body. Use a single project-wide error body via `WithErrorBody` on the top-level `NewRouter` call if you want gentypescript to track it.
+
+If you see this warning and want a fully consistent typed `ErrorResponse`, pass `WithErrorBody[Reg](marshaler)` directly to `NewRouter` (or through a same-package wrapper/factory whose return paths all agree) so the analyzer can resolve it. Cases that remain unsupported by design include configuration-driven option lists (e.g. only appending `WithErrorBody` when a runtime flag is set) — those are inherently undecidable for static analysis, and the warning is the best the generator can offer.
+
+##### Out of scope
+
+- Per-endpoint error body types. `WithErrorBody` registers a single project-wide body type.
+- Encoder selection per error type (always uses the router's `Codec`).
+- Automatic Go-side error → status mapping via the body marshaler. Status is still resolved through `ErrorWithStatus`; the marshaler may reuse it but cannot set it.
+
 ### Middleware
 
 You can use `tanukirpc` with [go-chi/chi/middleware](https://pkg.go.dev/github.com/go-chi/chi/v5@v5.1.0/middleware) or `func (http.Handler) http.Handler` style middlewares. [gorilla/handlers](https://pkg.go.dev/github.com/gorilla/handlers) is also included in this.

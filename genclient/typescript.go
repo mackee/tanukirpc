@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"go/token"
 	"go/types"
 	"io"
 	"os"
@@ -39,6 +40,21 @@ func init() {
 
 func generateTypeScriptClient(pass *analysis.Pass) (any, error) {
 	result := pass.ResultOf[Analyzer].(*AnalyzerResult)
+	if len(result.MultipleAnalyzeTargetPositions) > 0 {
+		for _, pos := range result.MultipleAnalyzeTargetPositions {
+			pass.Reportf(pos,
+				"gentypescript: AnalyzeTarget must be called at most once per package; the generated client cannot represent more than one router's routes and error body")
+		}
+		return &bytes.Buffer{}, nil
+	}
+	for _, pos := range result.UnresolvedOptions {
+		pass.Reportf(pos,
+			"gentypescript: could not statically determine whether this RouterOption configures the error response body; the generated TypeScript ErrorResponse type may not match runtime behavior")
+	}
+	reportErrorBodyTypeWarnings(pass, result.ErrorBody, result.AnalyzeTargetCallPos)
+	if reportErrorBodyFatalErrors(pass, result.ErrorBody, result.AnalyzeTargetCallPos) {
+		return &bytes.Buffer{}, nil
+	}
 	if len(result.RoutePaths) == 0 {
 		return &bytes.Buffer{}, nil
 	}
@@ -47,7 +63,7 @@ func generateTypeScriptClient(pass *analysis.Pass) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TypeScript client generator: %w", err)
 	}
-	if err := gen.generate(result.RoutePaths); err != nil {
+	if err := gen.generate(result.RoutePaths, result.ErrorBody); err != nil {
 		return nil, fmt.Errorf("failed to generate TypeScript client code: %w", err)
 	}
 	if typeScriptClientOutPath != "" {
@@ -61,6 +77,177 @@ func generateTypeScriptClient(pass *analysis.Pass) (any, error) {
 	}
 
 	return gen.rw, nil
+}
+
+// reportErrorBodyFatalErrors inspects the registered error body Go type and
+// reports diagnostics that gentypescript treats as fatal. Returns true when a
+// fatal error was emitted and the caller must skip client generation.
+//
+// Currently fatal:
+//   - The error body has no json-tagged fields that gentypescript can render
+//     (empty struct, struct whose fields are all skipped, or struct that
+//     only contains embedded fields). Without a fatal error the generated
+//     `ErrorResponse` collapses to `error: undefined`, while encoding/json
+//     emits `{"error":{}}` at runtime — a shape clients cannot satisfy.
+func reportErrorBodyFatalErrors(pass *analysis.Pass, tt types.Type, fallbackPos token.Pos) bool {
+	if tt == nil {
+		return false
+	}
+	inner := tt
+	if pt, ok := inner.(*types.Pointer); ok {
+		inner = pt.Elem()
+	}
+	st := underlyingStruct(inner)
+	if st == nil {
+		return false
+	}
+	if hasRenderableJSONField(st) {
+		return false
+	}
+	pos := token.NoPos
+	if nt, ok := inner.(*types.Named); ok && nt.Obj() != nil {
+		pos = nt.Obj().Pos()
+	}
+	if !pos.IsValid() {
+		pos = fallbackPos
+	}
+	if structHasOnlyEmbeddedFields(st) {
+		pass.Reportf(pos,
+			"gentypescript: error body type %s contains only embedded fields; encoding/json would flatten them into %q at runtime, but gentypescript does not represent embedded fields in the generated TypeScript ErrorResponse. Replace the embedded fields with explicit json-tagged fields.",
+			tt.String(), `{"error":{...}}`)
+		return true
+	}
+	pass.Reportf(pos,
+		"gentypescript: error body type %s has no json-tagged fields that gentypescript can render; encoding/json would emit %q at runtime but the generated TypeScript ErrorResponse type would collapse to an unusable shape. Add at least one explicit json-tagged field.",
+		tt.String(), `{"error":{}}`)
+	return true
+}
+
+// structHasOnlyEmbeddedFields reports whether every field of st is embedded.
+// A struct with zero fields returns false (handled by the generic empty-body
+// message instead).
+func structHasOnlyEmbeddedFields(st *types.Struct) bool {
+	if st.NumFields() == 0 {
+		return false
+	}
+	for i := 0; i < st.NumFields(); i++ {
+		if !st.Field(i).Embedded() {
+			return false
+		}
+	}
+	return true
+}
+
+// hasRenderableJSONField reports whether st has at least one direct field
+// that gentypescript would emit into the generated TypeScript ErrorResponse.
+// Embedded fields are not rendered, so they are skipped here. Unexported
+// fields are also skipped because encoding/json drops them at runtime.
+func hasRenderableJSONField(st *types.Struct) bool {
+	for i := 0; i < st.NumFields(); i++ {
+		f := st.Field(i)
+		if f.Embedded() {
+			continue
+		}
+		if !f.Exported() {
+			continue
+		}
+		tag := reflect.StructTag(st.Tag(i))
+		v := tag.Get("json")
+		if v == "" {
+			continue
+		}
+		name := strings.Split(v, ",")[0]
+		if name == "" || name == "-" {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// reportErrorBodyTypeWarnings inspects the registered error body Go type and
+// emits diagnostics for shapes that would silently misrepresent runtime
+// behavior in the generated TypeScript:
+//   - Pointer E: encoding/json can emit null, but the generated ErrorResponse
+//     type is not nullable.
+//   - Exported struct fields without a json tag: encoding/json names them by
+//     Go field name, but toFields skips them so the generated TS omits them.
+//   - Embedded struct fields: encoding/json flattens them into the parent
+//     object, but gentypescript does not, so the generated TS omits the
+//     flattened fields. Use explicit json-tagged fields instead.
+func reportErrorBodyTypeWarnings(pass *analysis.Pass, tt types.Type, fallbackPos token.Pos) {
+	if tt == nil {
+		return
+	}
+	if pt, ok := tt.(*types.Pointer); ok {
+		pos := token.NoPos
+		if nt, ok := pt.Elem().(*types.Named); ok && nt.Obj() != nil {
+			pos = nt.Obj().Pos()
+		}
+		if !pos.IsValid() {
+			pos = fallbackPos
+		}
+		pass.Reportf(pos,
+			"gentypescript: error body type %s is a pointer; runtime encoding/json may emit {\"error\": null}, but the generated TypeScript ErrorResponse type is not nullable. Use a struct value type instead.",
+			tt.String())
+		tt = pt.Elem()
+	}
+	st := underlyingStruct(tt)
+	if st == nil {
+		return
+	}
+	reportUntaggedFields(pass, st)
+}
+
+// reportUntaggedFields warns at every direct exported field that lacks a json
+// tag, and at every embedded field that encoding/json would flatten (i.e.
+// embedded fields without `json:"-"`). gentypescript does not represent
+// embedded fields in the generated TypeScript ErrorResponse.
+func reportUntaggedFields(pass *analysis.Pass, st *types.Struct) {
+	for i := 0; i < st.NumFields(); i++ {
+		f := st.Field(i)
+		tag := reflect.StructTag(st.Tag(i))
+		if f.Embedded() {
+			if name := strings.Split(tag.Get("json"), ",")[0]; name == "-" {
+				continue
+			}
+			pass.Reportf(f.Pos(),
+				"gentypescript: error body has an embedded field %q; encoding/json flattens its contents at runtime, but the generated TypeScript ErrorResponse omits them. Replace it with explicit json-tagged fields.",
+				f.Name())
+			continue
+		}
+		if !f.Exported() {
+			if name := strings.Split(tag.Get("json"), ",")[0]; name != "" && name != "-" {
+				pass.Reportf(f.Pos(),
+					"gentypescript: error body field %q is unexported but has a json tag; encoding/json drops unexported fields at runtime, so the generated TypeScript ErrorResponse will not match the wire format. Export the field (capitalize the name) to include it.",
+					f.Name())
+			}
+			continue
+		}
+		if tag.Get("json") != "" {
+			continue
+		}
+		pass.Reportf(f.Pos(),
+			"gentypescript: error body field %q has no json tag; encoding/json will emit it as %q at runtime, but the generated TypeScript ErrorResponse will omit it",
+			f.Name(), f.Name())
+	}
+}
+
+// underlyingStruct returns the *types.Struct underlying tt, peeling pointer
+// and named-type wrappers. Returns nil if tt does not bottom out at a struct.
+func underlyingStruct(tt types.Type) *types.Struct {
+	for {
+		switch u := tt.(type) {
+		case *types.Pointer:
+			tt = u.Elem()
+		case *types.Named:
+			tt = u.Underlying()
+		case *types.Struct:
+			return u
+		default:
+			return nil
+		}
+	}
 }
 
 type typeScriptClientGenerator struct {
@@ -81,7 +268,7 @@ func newTypeScriptClientGenerator() (*typeScriptClientGenerator, error) {
 	}, nil
 }
 
-func (t *typeScriptClientGenerator) generate(routes []RoutePath) error {
+func (t *typeScriptClientGenerator) generate(routes []RoutePath, errorBody types.Type) error {
 	templateArgs := make(typeScriptClientGeneratorTemplateArgs, 0, len(routes))
 	for _, r := range routes {
 		h := r.Handler()
@@ -113,10 +300,60 @@ func (t *typeScriptClientGenerator) generate(routes []RoutePath) error {
 
 		templateArgs = append(templateArgs, mp)
 	}
-	if err := t.tmpl.Execute(t.rw, templateArgs); err != nil {
+
+	templateData := &typeScriptClientGeneratorTemplateData{Routes: templateArgs}
+	if errorBody != nil {
+		eb, err := t.buildErrorBody(errorBody)
+		if err != nil {
+			return fmt.Errorf("failed to generate error body type: %w", err)
+		}
+		templateData.ErrorBody = eb
+	}
+
+	if err := t.tmpl.Execute(t.rw, templateData); err != nil {
 		return fmt.Errorf("failed to execute template: %w", err)
 	}
 	return nil
+}
+
+// buildErrorBody converts the analyzed ErrorBody Go type into the data passed
+// to the TypeScript template: a rendered object field and the list of
+// primitive json fields that should drive the isErrorResponse predicate.
+func (t *typeScriptClientGenerator) buildErrorBody(tt types.Type) (*typeScriptClientGeneratorErrorBody, error) {
+	field, err := t.typeInfo(tt, "json")
+	if err != nil {
+		return nil, err
+	}
+	obj, ok := field.(*typeScriptClientGeneratorObjectField)
+	if !ok {
+		return nil, fmt.Errorf("error body type %s did not render to an object", tt.String())
+	}
+	required := make([]typeScriptClientGeneratorErrorBodyField, 0, len(obj.fields))
+	for _, f := range obj.fields {
+		gf, ok := f.(*typeScriptClientGeneratorGenericField)
+		if !ok {
+			continue
+		}
+		if gf.isOption || gf.isSlice {
+			continue
+		}
+		lit, ok := gf.typedef.(typeScriptClientGeneratorLiteralType)
+		if !ok {
+			continue
+		}
+		kind := string(lit)
+		if kind != "string" && kind != "number" && kind != "boolean" {
+			continue
+		}
+		required = append(required, typeScriptClientGeneratorErrorBodyField{
+			Name: gf.name,
+			Kind: kind,
+		})
+	}
+	return &typeScriptClientGeneratorErrorBody{
+		Field:          obj,
+		RequiredFields: required,
+	}, nil
 }
 
 type typeScriptClientGeneratorField interface {
@@ -299,6 +536,13 @@ func (t *typeScriptClientGenerator) toFields(tt *types.Struct, filterTag string)
 		if tagFieldName == "-" {
 			continue
 		}
+		// Unexported fields are dropped by encoding/json at runtime even when
+		// they carry a tag, so the generated TypeScript must not include them
+		// either. The error-body analyzer surfaces this as a warning so users
+		// notice the mismatch with their declared tag.
+		if !f.Exported() {
+			continue
+		}
 		fieldName := tagFieldName
 
 		var required bool
@@ -416,6 +660,29 @@ func (t *typeScriptClientGenerator) typeNameByBasicLit(tt *types.Basic) (string,
 
 	}
 	return "", fmt.Errorf("unsupported basic type: %s", tt.String())
+}
+
+// typeScriptClientGeneratorTemplateData is the top-level data passed to
+// typescriptclient.tmpl. Routes drives the per-endpoint blocks (its methods —
+// BuiltPaths, Methods — are reused from the previous template data). ErrorBody
+// is non-nil only when WithErrorBody is registered on the router.
+type typeScriptClientGeneratorTemplateData struct {
+	Routes    typeScriptClientGeneratorTemplateArgs
+	ErrorBody *typeScriptClientGeneratorErrorBody
+}
+
+type typeScriptClientGeneratorErrorBody struct {
+	Field          typeScriptClientGeneratorField
+	RequiredFields []typeScriptClientGeneratorErrorBodyField
+}
+
+func (e *typeScriptClientGeneratorErrorBody) RenderField(prefix string) string {
+	return e.Field.RenderResponse(prefix)
+}
+
+type typeScriptClientGeneratorErrorBodyField struct {
+	Name string
+	Kind string
 }
 
 type typeScriptClientGeneratorTemplateArgs []*typeScriptClientGeneratorTemplateArgsMethodPath

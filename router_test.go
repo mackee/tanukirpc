@@ -107,6 +107,12 @@ func TestRouter(t *testing.T) {
 			request: errorRedirectHandlerRequest(t),
 			expect:  errorRedirectHandlerExpect,
 		},
+		{
+			name:    "custom error body handler",
+			router:  customErrorBodyHandler(),
+			request: customErrorBodyHandlerRequest(t),
+			expect:  customErrorBodyHandlerExpect,
+		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -389,4 +395,61 @@ func errorRedirectHandlerExpect(t *testing.T, resp *http.Response, err error) {
 
 	assert.Equal(t, http.StatusFound, resp.StatusCode)
 	assert.Equal(t, "https://example.com", resp.Header.Get("Location"))
+}
+
+type customErrorBody struct {
+	Message string `json:"message"`
+	Status  int    `json:"status"`
+	Code    string `json:"code,omitempty"`
+}
+
+type codedError struct{ code string }
+
+func (e *codedError) Error() string { return "coded: " + e.code }
+func (e *codedError) Code() string  { return e.code }
+
+func customErrorBodyHandler() http.Handler {
+	h := func(ctx tanukirpc.Context[struct{}], req struct{}) (*struct{}, error) {
+		return nil, tanukirpc.WrapErrorWithStatus(http.StatusNotFound, &codedError{code: "USER_NOT_FOUND"})
+	}
+	build := func(err error) customErrorBody {
+		body := customErrorBody{Message: err.Error(), Status: http.StatusInternalServerError}
+		var ews tanukirpc.ErrorWithStatus
+		if errors.As(err, &ews) {
+			body.Status = ews.Status()
+		}
+		var coded interface{ Code() string }
+		if errors.As(err, &coded) {
+			body.Code = coded.Code()
+		}
+		return body
+	}
+	router := tanukirpc.NewRouter(
+		struct{}{},
+		tanukirpc.WithErrorBody[struct{}](build),
+	)
+	router.Get("/missing", tanukirpc.NewHandler(h))
+
+	return router
+}
+
+func customErrorBodyHandlerRequest(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "/missing", nil)
+	require.NoError(t, err)
+	req.Header.Set("accept", "application/json")
+	return req
+}
+
+func customErrorBodyHandlerExpect(t *testing.T, resp *http.Response, err error) {
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	var envelope struct {
+		Error customErrorBody `json:"error"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	assert.Equal(t, "coded: USER_NOT_FOUND", envelope.Error.Message)
+	assert.Equal(t, http.StatusNotFound, envelope.Error.Status)
+	assert.Equal(t, "USER_NOT_FOUND", envelope.Error.Code)
 }
