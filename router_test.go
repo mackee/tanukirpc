@@ -113,6 +113,12 @@ func TestRouter(t *testing.T) {
 			request: customErrorBodyHandlerRequest(t),
 			expect:  customErrorBodyHandlerExpect,
 		},
+		{
+			name:    "with error hooker typed body",
+			router:  withErrorHookerTypedBodyHandler(),
+			request: customErrorBodyHandlerRequest(t),
+			expect:  customErrorBodyHandlerExpect,
+		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -441,15 +447,38 @@ func customErrorBodyHandlerRequest(t *testing.T) *http.Request {
 	return req
 }
 
+func withErrorHookerTypedBodyHandler() http.Handler {
+	h := func(ctx tanukirpc.Context[struct{}], req struct{}) (*struct{}, error) {
+		return nil, tanukirpc.WrapErrorWithStatus(http.StatusNotFound, &codedError{code: "USER_NOT_FOUND"})
+	}
+	build := func(err error) customErrorBody {
+		body := customErrorBody{Message: err.Error(), Status: http.StatusInternalServerError}
+		var ews tanukirpc.ErrorWithStatus
+		if errors.As(err, &ews) {
+			body.Status = ews.Status()
+		}
+		var coded interface{ Code() string }
+		if errors.As(err, &coded) {
+			body.Code = coded.Code()
+		}
+		return body
+	}
+	router := tanukirpc.NewRouter(
+		struct{}{},
+		tanukirpc.WithErrorHooker[struct{}](tanukirpc.NewErrorBodyHooker(build)),
+	)
+	router.Get("/missing", tanukirpc.NewHandler(h))
+
+	return router
+}
+
 func customErrorBodyHandlerExpect(t *testing.T, resp *http.Response, err error) {
 	require.NoError(t, err)
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	var envelope struct {
-		Error customErrorBody `json:"error"`
-	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
-	assert.Equal(t, "coded: USER_NOT_FOUND", envelope.Error.Message)
-	assert.Equal(t, http.StatusNotFound, envelope.Error.Status)
-	assert.Equal(t, "USER_NOT_FOUND", envelope.Error.Code)
+	var body customErrorBody
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "coded: USER_NOT_FOUND", body.Message)
+	assert.Equal(t, http.StatusNotFound, body.Status)
+	assert.Equal(t, "USER_NOT_FOUND", body.Code)
 }

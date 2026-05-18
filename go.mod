@@ -1,6 +1,6 @@
 module github.com/mackee/tanukirpc
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/coreos/go-oidc/v3 v3.17.0

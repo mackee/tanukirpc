@@ -1,0 +1,91 @@
+version: "3"
+
+# Drives the local dev loop for the typed-error-body example.
+# Defaults to running tanukiup (Go server hot-reload) and Vite (frontend dev
+# server) side by side via `task dev`.
+
+tasks:
+  default:
+    cmds:
+      - task --list-all
+
+  dev:
+    desc: Run the Go server (tanukiup) and the frontend (vite) in parallel.
+    deps:
+      - server
+      - frontend
+
+  server:
+    desc: Run the Go server with tanukiup hot-reload (UDS proxy mode, single entry point).
+    cmds:
+      # tanukiup acts as the single entry point on 127.0.0.1:8080:
+      #
+      #   -addr             binds the user-facing port and runs the child
+      #                     binary with TANUKIUP_UDS_PATH set. Router.Listen-
+      #                     AndServe auto-detects it and listens on the UDS
+      #                     instead, so reloads never race the TCP port.
+      #   -catchall-target  any request that does NOT match a route the
+      #                     child registers (i.e. anything outside /api/...)
+      #                     is reverse-proxied to the Vite dev server. The
+      #                     browser therefore only ever talks to port 8080
+      #                     and Vite never needs to know the Go route map.
+      - go tool tanukiup -dir ./ -ignore-dir frontend -addr 127.0.0.1:8080 -catchall-target http://localhost:5173
+
+  frontend:
+    desc: Run the Vite dev server for the frontend.
+    deps: [frontend:install]
+    dir: frontend
+    cmds:
+      - bun run dev
+
+  frontend:install:
+    desc: Install frontend dependencies (idempotent; runs only when lockfile changes).
+    dir: frontend
+    cmds:
+      - bun install
+    sources:
+      - package.json
+      - bun.lock
+    generates:
+      - node_modules/.package-lock.json
+
+  generate:
+    desc: Regenerate frontend/src/client.ts via gentypescript.
+    cmds:
+      - go generate ./
+
+  test:
+    desc: Run the Go tests.
+    cmds:
+      - go test ./...
+
+  lint:
+    desc: Build the example package and run biome lint on the frontend.
+    cmds:
+      # go vet is intentionally not run here: it would also analyze the
+      # replace-target parent module and surface unrelated, pre-existing
+      # warnings. `go build` is enough to catch compile-level issues for the
+      # example itself.
+      - go build ./...
+      - task: frontend:lint
+
+  frontend:lint:
+    desc: Run biome lint on the frontend.
+    deps: [frontend:install]
+    dir: frontend
+    cmds:
+      - bun run lint
+
+  build:
+    desc: Build the frontend bundle and the Go binary.
+    deps: [frontend:install]
+    cmds:
+      - go build ./
+      - task: frontend:build
+
+  frontend:build:
+    desc: Build the production frontend bundle.
+    deps: [frontend:install]
+    dir: frontend
+    cmds:
+      - bun run build

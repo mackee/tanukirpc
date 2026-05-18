@@ -1,0 +1,5 @@
+# go-task local cache (sources/generates checksums).
+.task/
+
+# Built example binary.
+/error-body
