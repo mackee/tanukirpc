@@ -24,7 +24,7 @@ the wire shape is exactly the struct.
 
 ### Requirements
 
-- Go 1.25 or later
+- Go 1.26 or later
 - [Bun] 1.1 or later (Vite + React frontend)
 - [go-task] (`task`) 3 or later
 

@@ -25,8 +25,8 @@ export const isErrorResponse = (response: unknown): response is ErrorResponse =>
   }
   const e = response as Record<string, unknown>;
   return (
-    typeof e["message"] === "string" &&
-    typeof e["status"] === "number"
+    typeof e.message === "string" &&
+    typeof e.status === "number"
   );
 };
 

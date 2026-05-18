@@ -512,10 +512,13 @@ func (t *typeScriptClientGenerator) generate(routes []RoutePath, errorBody types
 
 // buildErrorBody converts the analyzed ErrorBody Go type into the data passed
 // to the TypeScript template: a rendered object field and the list of json
-// fields that should drive the isErrorResponse predicate. Primitive fields
-// emit a typeof check; struct/map/slice fields emit an object-presence check
-// so error bodies whose required fields are non-primitives (for example
-// {errors: Record<string,string>}) can still be discriminated at runtime.
+// fields that drive the isErrorResponse predicate. Only fields whose runtime
+// value can never be null are eligible: required primitive fields emit a
+// typeof check, and required non-pointer struct value fields emit an
+// object-presence check (encoding/json always writes `{...}` for them).
+// Slice / map / pointer fields are excluded because nil values become `null`
+// on the wire and would make the predicate misclassify valid error responses
+// as successes — see errorBodyFieldPredicate.
 func (t *typeScriptClientGenerator) buildErrorBody(tt types.Type) (*typeScriptClientGeneratorErrorBody, error) {
 	field, err := t.typeInfo(tt, "json")
 	if err != nil {

@@ -300,13 +300,13 @@ export const isErrorResponse = (response: unknown): response is ErrorResponse =>
   }
   const e = response as Record<string, unknown>;
   return (
-    typeof e["message"] === "string" &&
-    typeof e["status"] === "number"
+    typeof e.message === "string" &&
+    typeof e.status === "number"
   );
 };
 ```
 
-The `isErrorResponse` predicate is derived from the registered struct: every required (non-`omitempty`) json field becomes part of the narrowing check. Primitives use `typeof === "string"|"number"|"boolean"`, slices use `Array.isArray(...)`, and structs/maps use an object-presence check (`typeof === "object" && !== null`) so error bodies whose required fields are non-primitives (for example `{errors: Record<string,string>}`) can still be discriminated. When no custom body is registered, the existing `!!(response as { error: unknown })?.error` check is preserved.
+The `isErrorResponse` predicate is derived from the registered struct: required (non-`omitempty`) json fields that the generator can statically prove are never null become part of the narrowing check. Primitives (string / number / boolean) emit a `typeof` check, and non-pointer struct value fields emit an object-presence check (`typeof === "object" && !== null`) — encoding/json always writes `{...}` for them. Slice / map / pointer fields are deliberately excluded: their nil values become `null` on the wire (without `omitempty`), and including them as discriminators would cause valid error responses to be classified as successes. If no required field qualifies, `gentypescript` refuses to generate the client and emits a fatal diagnostic so you add at least one non-nilable required field. When no custom body is registered, the existing `!!(response as { error: unknown })?.error` check is preserved. Bracket notation is used only for json keys that are not valid JavaScript identifiers.
 
 ##### Analyzer reach and limitations
 
