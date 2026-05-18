@@ -188,27 +188,25 @@ func WithErrorHooker[Reg any](eh ErrorHooker) RouterOption[Reg] {
 	}
 }
 
-// WithErrorBody registers an application-defined error body type E and the
-// marshaler that builds it from a handler error. The default ErrorHooker will
-// encode {"error": <E>} as the response body instead of the standard
-// ErrorMessage. The Reg type parameter exists only to satisfy
-// RouterOption[Reg] and is not used internally; callers typically only need to
-// specify Reg explicitly (E is inferred from the marshaler):
+// WithErrorBody registers an application-defined error response body type E
+// and the marshaler that builds it from a handler error. The marshaler's
+// return value is encoded as the entire response body. The Reg type parameter
+// exists only to satisfy RouterOption[Reg] and is not used internally;
+// callers typically only need to specify Reg explicitly (E is inferred from
+// the marshaler):
 //
 //	tanukirpc.WithErrorBody[*Registry](buildErrorBody)
 //
 // gentypescript picks up E from this call to emit the matching ErrorResponse
 // TypeScript type and the isErrorResponse narrowing predicate.
 //
-// WithErrorBody installs an ErrorHooker on the same slot as WithErrorHooker,
-// so the later option wins when both are passed.
+// WithErrorBody is a thin convenience over WithErrorHooker: it installs an
+// ErrorHookerWithBody[E] built from the marshaler. Pass a custom
+// ErrorHookerWithBody[E] to WithErrorHooker directly when more control over
+// the response is needed (for example when wrapping the typed body in a
+// codec-specific hooker).
 func WithErrorBody[Reg any, E any](marshaler ErrorBodyMarshaler[E]) RouterOption[Reg] {
-	return func(r *Router[Reg]) *Router[Reg] {
-		r.errorHooker = newErrorHookerWithMarshaler(func(err error) any {
-			return marshaler(err)
-		})
-		return r
-	}
+	return WithErrorHooker[Reg](NewErrorBodyHooker(marshaler))
 }
 
 func WithLogger[Reg any](logger *slog.Logger) RouterOption[Reg] {

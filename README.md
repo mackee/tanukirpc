@@ -199,17 +199,16 @@ By default the error response body is `tanukirpc.ErrorMessage` (`{"error": {"mes
 ##### Go-side API
 
 ```go
-// A function the user supplies to build the inner error body from an error.
+// A function the user supplies to build the entire response body from an error.
 type ErrorBodyMarshaler[E any] func(err error) E
 
 // Register the custom body type and how to build it.
 //
-//   - E is the Go struct that will be encoded as the inner error body.
+//   - E is the Go struct that will be encoded as the response body.
 //     Its json tags drive both the runtime encoding and the TypeScript
 //     type emitted by gentypescript.
-//   - The marshaler is invoked by the default ErrorHooker. It receives the
-//     handler error (possibly wrapped via WrapErrorWithStatus) and returns
-//     the value to encode.
+//   - The marshaler's return value is encoded as the entire response body,
+//     so the marshaler controls the top-level wire shape.
 //   - The router still resolves the HTTP status via ErrorWithStatus /
 //     ErrorWithRedirect exactly as today; only the response body changes.
 func WithErrorBody[Reg any, E any](marshaler ErrorBodyMarshaler[E]) RouterOption[Reg]
@@ -244,26 +243,48 @@ r := tanukirpc.NewRouter(
 )
 ```
 
-The response body wire shape is `{"error": <E>}` (the same `error` envelope as the default `tanukirpc.ErrorMessage`, with the inner body replaced by your type).
+The response body wire shape is `<E>` — the marshaler's return value is encoded as the entire body, so any top-level shape is possible (`{"message": ..., "code": ...}`, `{"errors": {...}}` for the Inertia.js validation protocol, and so on).
+
+A runnable end-to-end example (server + generated `client.ts` + tests) lives at [`_example/error-body`](./_example/error-body).
 
 Notes:
 
 - When `WithErrorBody` is **not** used, the default `ErrorHooker` encodes `tanukirpc.ErrorMessage` exactly as before.
-- `WithErrorBody` and `WithErrorHooker` install the hooker on the same slot. The later option wins, so pass `WithErrorHooker` after `WithErrorBody` if you need to fully take over error rendering.
+- `WithErrorBody` is a thin convenience over `WithErrorHooker` — it installs an `ErrorHookerWithBody[E]` built from the marshaler on the same router slot. Pass a custom `ErrorHookerWithBody[E]` to `WithErrorHooker` directly when more control over the response is needed (for example when wrapping the typed body in a codec-specific hooker).
+
+##### Composing with a custom hooker
+
+`tanukirpc.ErrorHookerWithBody[E]` is `ErrorHooker` plus a single marker method `ErrorBodyType() E`. Implementing it lets gentypescript pick up the typed body even when the hooker is installed through `WithErrorHooker`:
+
+```go
+type ErrorHookerWithBody[E any] interface {
+    ErrorHooker
+    ErrorBodyType() E // returns the zero value; only the signature matters
+}
+```
+
+`tanukirpc.NewErrorBodyHooker[E](marshaler)` returns the default implementation and can be passed to `WithErrorHooker` directly:
+
+```go
+tanukirpc.NewRouter(
+    registry,
+    tanukirpc.WithErrorHooker[*Registry](tanukirpc.NewErrorBodyHooker(buildErrorBody)),
+)
+```
+
+Use this when an external hooker (e.g. `codec/inertiajs`) needs to wrap the typed body for protocol-specific rendering: the wrapping hooker can implement `ErrorHookerWithBody[E]` itself, and `gentypescript` will still see `E` through the `WithErrorHooker` call.
 
 ##### gentypescript-side
 
-`gentypescript` automatically picks up the type registered via `WithErrorBody` from the `tanukirpc.NewRouter` call that produced the analyzed router. No extra option is required.
+`gentypescript` automatically picks up the type registered via `WithErrorBody` from the `tanukirpc.NewRouter` call that produced the analyzed router. No extra option is required. The same mechanism extracts `E` from a `WithErrorHooker` argument whose static type implements `ErrorHookerWithBody[E]`.
 
 Resulting `client.ts` shape:
 
 ```ts
 export type ErrorResponse = {
-  error: {
-    message: string;
-    status: number;
-    code?: string;
-  };
+  message: string;
+  status: number;
+  code?: string;
 };
 
 type apiSchemaCollection = {
@@ -274,15 +295,18 @@ type apiSchemaCollection = {
 };
 
 export const isErrorResponse = (response: unknown): response is ErrorResponse => {
-  const e = (response as { error?: unknown })?.error;
+  if (response === null || typeof response !== "object") {
+    return false;
+  }
+  const e = response as Record<string, unknown>;
   return (
-    typeof (e as { message?: unknown })?.message === "string" &&
-    typeof (e as { status?: unknown })?.status === "number"
+    typeof e.message === "string" &&
+    typeof e.status === "number"
   );
 };
 ```
 
-The `isErrorResponse` predicate is derived from the registered struct: every primitive (string/number/boolean) json field that lacks `omitempty` becomes part of the narrowing check. Optional or non-primitive fields are ignored. When no custom body is registered, the existing `!!(response as { error: unknown })?.error` check is preserved.
+The `isErrorResponse` predicate is derived from the registered struct: required (non-`omitempty`) json fields that the generator can statically prove are never null become part of the narrowing check. Primitives (string / number / boolean) emit a `typeof` check, and non-pointer struct value fields emit an object-presence check (`typeof === "object" && !== null`) — encoding/json always writes `{...}` for them. Slice / map / pointer fields are deliberately excluded: their nil values become `null` on the wire (without `omitempty`), and including them as discriminators would cause valid error responses to be classified as successes. If no required field qualifies, `gentypescript` refuses to generate the client and emits a fatal diagnostic so you add at least one non-nilable required field. When no custom body is registered, the existing `!!(response as { error: unknown })?.error` check is preserved. Bracket notation is used only for json keys that are not valid JavaScript identifiers.
 
 ##### Analyzer reach and limitations
 
@@ -292,7 +316,8 @@ The analyzer tracks the router value handed to `genclient.AnalyzeTarget` back to
 - Router built by a same-package factory (`func newAppRouter() *tanukirpc.Router[Reg] { return tanukirpc.NewRouter(reg, tanukirpc.WithErrorBody[Reg](...)) }`)
 - Options assembled by a helper and spread: `tanukirpc.NewRouter(reg, buildOptions()...)` (also when the helper is generic: `tanukirpc.NewRouter(reg, buildOptions[Reg]()...)`)
 - Wrappers that return a `RouterOption[Reg]`: `func appErrorBody[Reg any]() tanukirpc.RouterOption[Reg] { return tanukirpc.WithErrorBody[Reg](...) }` passed to `NewRouter`
-- Last-wins option order: a `WithErrorHooker` placed after `WithErrorBody` resets the generated client back to the default `{ error: { message: string } }` shape, matching `Router.apply` precedence
+- `WithErrorHooker` whose argument's static type implements `ErrorHookerWithBody[E]` (e.g. `tanukirpc.NewErrorBodyHooker(marshaler)`, or a codec-specific hooker that wraps it)
+- Last-wins option order: a `WithErrorHooker` placed after `WithErrorBody` resets the generated client back to the default `{ error: { message: string } }` shape (unless its argument also implements `ErrorHookerWithBody[E]`), matching `Router.apply` precedence
 
 When an option cannot be statically classified — for example a `RouterOption` loaded from a package-level variable, chosen via `if/else` (`*ssa.Phi`), assembled with `append`, returned by a helper in **another package** the analyzer cannot follow, or a `...`-spread of any of those — `gentypescript` emits a diagnostic at the option site:
 

@@ -537,6 +537,14 @@ func (g *tanukiTypeInfo) classifyOptionRec(v ssa.Value, visited map[*ssa.Functio
 		return optResult{kind: optUnresolved}
 	}
 	if isSameOriginFunc(obj, g.withErrorHookerObj) {
+		// A WithErrorHooker call whose argument implements
+		// ErrorHookerWithBody[E] is the typed entry point: the hooker
+		// declares the wire shape of the response body. Extract E so the
+		// generated client.ts keeps a typed ErrorResponse for these calls
+		// instead of falling back to the default error shape.
+		if eb := g.errorBodyFromHookerArg(call); eb != nil {
+			return optResult{kind: optErrorBody, errorBody: eb}
+		}
 		return optResult{kind: optErrorHooker}
 	}
 	if obj != nil {
@@ -646,6 +654,63 @@ func (g *tanukiTypeInfo) errorBodyTypeArg(call *ssa.Call) types.Type {
 		return nil
 	}
 	return args.At(0)
+}
+
+// errorBodyFromHookerArg returns the E type parameter of an
+// ErrorHookerWithBody[E] passed as the first argument of WithErrorHooker.
+// Returns nil when the argument is a plain ErrorHooker (no ErrorBodyType
+// method) or when the receiver type cannot be discovered statically.
+func (g *tanukiTypeInfo) errorBodyFromHookerArg(call *ssa.Call) types.Type {
+	if len(call.Call.Args) < 1 {
+		return nil
+	}
+	t := hookerArgConcreteType(call.Call.Args[0])
+	if t == nil {
+		return nil
+	}
+	// addressable=false uses the exact method set of t. With addressable=true,
+	// pointer-receiver methods of T would be visible when t is a value type T,
+	// which doesn't match Go's actual method-set rules: a value passed to
+	// WithErrorHooker(eh ErrorHooker) only carries value-receiver methods.
+	// Picking up a pointer-only ErrorBodyType marker here would generate a
+	// typed ErrorResponse for a hooker whose value form does not in fact
+	// implement ErrorHookerWithBody[E].
+	obj, _, _ := types.LookupFieldOrMethod(t, false, nil, "ErrorBodyType")
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		return nil
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil
+	}
+	if sig.Params().Len() != 0 || sig.Results().Len() != 1 {
+		return nil
+	}
+	return sig.Results().At(0).Type()
+}
+
+// hookerArgConcreteType peels SSA interface and conversion wrappers around the
+// argument passed to WithErrorHooker so that the underlying concrete (or
+// narrower interface) type — the one carrying ErrorBodyType — is visible.
+func hookerArgConcreteType(v ssa.Value) types.Type {
+	for {
+		switch u := v.(type) {
+		case *ssa.MakeInterface:
+			v = u.X
+		case *ssa.ChangeInterface:
+			v = u.X
+		case *ssa.ChangeType:
+			v = u.X
+		case *ssa.Convert:
+			v = u.X
+		default:
+			if v == nil {
+				return nil
+			}
+			return v.Type()
+		}
+	}
 }
 
 // collectVariadicElements unwraps an SSA *ssa.Slice (the synthetic slice the

@@ -1,6 +1,6 @@
 module github.com/mackee/tanukirpc/testdata
 
-go 1.25.0
+go 1.26.0
 
 require github.com/mackee/tanukirpc v0.0.0-20240801063458-86cabcae4c36
 
