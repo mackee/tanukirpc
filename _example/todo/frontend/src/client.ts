@@ -78,34 +78,48 @@ type apiSchemaCollection = {
       status: string;
     } | { error: { message: string } }
   };
-}
+};
 
 export const isErrorResponse = (response: unknown): response is { error: { message: string } } => {
   return !!((response as { error: unknown })?.error)
-}
+};
 
 type method = keyof apiSchemaCollection extends `${infer M} ${string}` ? M : never;
-type methodPathsByMethod<M extends method> = Extract<keyof apiSchemaCollection, `${M} ${string}`>
-type pathByMethod<MP extends string> = MP extends `${method} ${infer P}` ? P : never
-type pathsByMethod<M extends method> = pathByMethod<methodPathsByMethod<M>>
+type methodPathsByMethod<M extends method> = Extract<keyof apiSchemaCollection, `${M} ${string}`>;
+type pathByMethod<MP extends string> = MP extends `${method} ${infer P}` ? P : never;
+type pathsByMethod<M extends method> = pathByMethod<methodPathsByMethod<M>>;
 
 const hasApiRequest = <PM extends keyof apiSchemaCollection>(args: unknown): args is { data: apiSchemaCollection[PM]["Request"] } => {
   return !!(args as { data: unknown })?.data
-}
+};
 
 const hasApiQuery = <PM extends keyof apiSchemaCollection>(args: unknown): args is { query: apiSchemaCollection[PM]["Query"] } => {
   return !!(args as { query: unknown })?.query
-}
+};
 const apiPathBuilder = {
     "/api/tasks/{id}": (args: {id: string}) => `/api/tasks/${args.id}`,
-} as const
+} as const;
 
-const hasApiPathBuilder = (path: string): path is keyof typeof apiPathBuilder => path in apiPathBuilder
-type apiPathBuilderArgs<K extends keyof apiSchemaCollection> = K extends `${method} ${infer P}` ? (P extends keyof typeof apiPathBuilder ? Parameters<typeof apiPathBuilder[P]>[0] : never) : never
+const hasApiPathBuilder = (path: string): path is keyof typeof apiPathBuilder => path in apiPathBuilder;
+type apiPathBuilderArgs<PM extends keyof apiSchemaCollection> =
+	PM extends `${method} ${infer P}`
+		? P extends keyof typeof apiPathBuilder
+			? apiPathBuilderArgsByPath<P>
+			: never
+		: never;
+type apiPathBuilderArgsByPath<K extends keyof typeof apiPathBuilder> =
+	Parameters<(typeof apiPathBuilder)[K]>[0];
+
+const pathBuilderByPath = <P extends keyof typeof apiPathBuilder>(
+	path: P,
+): ((args: apiPathBuilderArgsByPath<P>) => string) => {
+	const builder: unknown = apiPathBuilder[path];
+	return builder as (args: apiPathBuilderArgsByPath<P>) => string;
+};
 
 const hasApiPathArgs = <PM extends keyof apiSchemaCollection>(args: unknown): args is { pathArgs: apiPathBuilderArgs<PM> } => {
   return !!(args as { pathArgs: unknown })?.pathArgs
-}
+};
 
 type pathCallArgs<PM extends keyof apiSchemaCollection> =
   apiSchemaCollection[PM]["Request"] extends undefined
@@ -148,35 +162,45 @@ type client = {
   post: <P extends pathsByMethod<"POST">>(path: P, args: pathCallArgs<`POST ${P}`>) => Promise<apiSchemaCollection[`POST ${P}`]["Response"]>
   put: <P extends pathsByMethod<"PUT">>(path: P, args: pathCallArgs<`PUT ${P}`>) => Promise<apiSchemaCollection[`PUT ${P}`]["Response"]>
   delete: <P extends pathsByMethod<"DELETE">>(path: P, args: pathCallArgs<`DELETE ${P}`>) => Promise<apiSchemaCollection[`DELETE ${P}`]["Response"]>
-}
+};
 
-export const newClient = (baseURL = ""): client => {
+type myFetcher = (input: string, init: { method: string; headers: Record<string, string>; body: string | undefined; }) => Promise<Response>;
+
+export const newClient = (
+  baseURL = "",
+  myFetch: myFetcher = (input, { body, ...init }) => fetch(input, body === undefined ? init : { ...init, body }),
+): client => {
   const fetchByPath = async <PM extends keyof apiSchemaCollection>(method: method, path: string, args: pathCallArgs<PM>) => {
-    const builtPath = hasApiPathBuilder(path) && hasApiPathArgs(args) ? apiPathBuilder[path](args.pathArgs) : path
-    const query = hasApiQuery(args) ? `?${new URLSearchParams(args.query).toString()}` : ""
-    const body = hasApiRequest(args) ? JSON.stringify(args.data) : undefined
-    const response = await fetch(baseURL + builtPath + query, {
+    const builtPath = hasApiPathBuilder(path) && hasApiPathArgs(args) ? pathBuilderByPath(path)(args.pathArgs) : path;
+    const query = hasApiQuery(args) ? `?${new URLSearchParams(args.query).toString()}` : "";
+    const body = hasApiRequest(args) ? JSON.stringify(args.data) : undefined;
+    const response = await myFetch(baseURL + builtPath + query, {
       method,
       headers: {
         "Content-Type": "application/json",
       },
       body,
-    })
+    });
 
     if (!response.ok) {
-      throw new Error(response.statusText)
+      try {
+        const error = await response.json();
+        return error;
+      } catch (e) {
+        throw new Error(response.statusText);
+      }
     }
-    return response.json() as Promise<apiSchemaCollection[PM]["Response"]>
+    return response.json() as Promise<apiSchemaCollection[PM]["Response"]>;
   }
-  const get = async <P extends pathsByMethod<"GET">>(path: P, args: pathCallArgs<`GET ${P}`>) => await fetchByPath("GET", path, args)
-  const post = async <P extends pathsByMethod<"POST">>(path: P, args: pathCallArgs<`POST ${P}`>) => await fetchByPath("POST", path, args)
-  const put = async <P extends pathsByMethod<"PUT">>(path: P, args: pathCallArgs<`PUT ${P}`>) => await fetchByPath("PUT", path, args)
-  const _delete = async <P extends pathsByMethod<"DELETE">>(path: P, args: pathCallArgs<`DELETE ${P}`>) => await fetchByPath("DELETE", path, args)
+  const get = async <P extends pathsByMethod<"GET">>(path: P, args: pathCallArgs<`GET ${P}`>) => await fetchByPath("GET", path, args);
+  const post = async <P extends pathsByMethod<"POST">>(path: P, args: pathCallArgs<`POST ${P}`>) => await fetchByPath("POST", path, args);
+  const put = async <P extends pathsByMethod<"PUT">>(path: P, args: pathCallArgs<`PUT ${P}`>) => await fetchByPath("PUT", path, args);
+  const _delete = async <P extends pathsByMethod<"DELETE">>(path: P, args: pathCallArgs<`DELETE ${P}`>) => await fetchByPath("DELETE", path, args);
 
   return {
     get,
     post,
     put,
     delete: _delete,
-  }
-}
+  };
+};
