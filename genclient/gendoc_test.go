@@ -281,6 +281,7 @@ func TestGoldenClientsTypeCheck(t *testing.T) {
 			cmd := exec.Command(tscPath,
 				"--noEmit",
 				"--strict",
+				"--exactOptionalPropertyTypes",
 				"--target", "es2020",
 				"--module", "esnext",
 				"--moduleResolution", "bundler",
@@ -293,6 +294,38 @@ func TestGoldenClientsTypeCheck(t *testing.T) {
 				t.Fatalf("tsc rejected %s:\n%s", p, strings.TrimSpace(string(out)))
 			}
 		})
+	}
+}
+
+func TestGeneratedClientRequestBodies(t *testing.T) {
+	tscPath, err := exec.LookPath("tsc")
+	if err != nil {
+		t.Skipf("tsc not on PATH: %v", err)
+	}
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skipf("node not on PATH: %v", err)
+	}
+	dir := filepath.Join(analysistest.TestData(), "gendoctest")
+	outDir := t.TempDir()
+	cmd := exec.Command(tscPath,
+		"--strict",
+		"--exactOptionalPropertyTypes",
+		"--target", "es2020",
+		"--module", "commonjs",
+		"--moduleResolution", "node",
+		"--lib", "es2020,dom",
+		"--skipLibCheck",
+		"--outDir", outDir,
+		filepath.Join(dir, "client.ts"),
+		filepath.Join(dir, "client_test.ts"),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("tsc rejected generated client request-body test:\n%s", strings.TrimSpace(string(out)))
+	}
+	cmd = exec.Command(nodePath, filepath.Join(outDir, "client_test.js"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generated client request-body test failed:\n%s", strings.TrimSpace(string(out)))
 	}
 }
 
