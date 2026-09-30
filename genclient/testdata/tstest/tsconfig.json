@@ -1,0 +1,13 @@
+{
+  // Builds src/**/*.test.ts (and the goldens they import) for `node --test`.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "nodenext",
+    "lib": ["es2022", "dom"],
+    "types": ["node"],
+    "rootDir": "..",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"]
+}

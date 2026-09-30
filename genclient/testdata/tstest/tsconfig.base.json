@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true
+  }
+}
