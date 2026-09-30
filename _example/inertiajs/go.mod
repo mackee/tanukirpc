@@ -1,6 +1,6 @@
 module github.com/mackee/tanukirpc/_example/inertiajs
 
-go 1.25.0
+go 1.26.0
 
 replace github.com/mackee/tanukirpc => ../..
 
