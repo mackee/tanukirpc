@@ -1,0 +1,18 @@
+{
+  "name": "tanukirpc-genclient-tstest",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.golden.json",
+    "build:runtime": "tsc -p tsconfig.json",
+    "test:runtime": "npm run build:runtime && node --test \"dist/**/*.test.js\"",
+    "check": "npm run typecheck && npm run test:runtime"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "typescript": "7.0.2"
+  }
+}

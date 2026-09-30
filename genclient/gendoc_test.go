@@ -3,9 +3,7 @@ package genclient_test
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/mackee/tanukirpc/genclient"
@@ -244,89 +242,6 @@ func TestGenerateTypeScriptClientWarnsOnUnexportedTaggedField(t *testing.T) {
 	testdata := analysistest.TestData()
 	results := analysistest.Run(t, testdata, genclient.TypeScriptClientGenerator, "./gendoctest_errbody_unexported_mix")
 	assertGoldenClientTS(t, filepath.Join(testdata, "gendoctest_errbody_unexported_mix", "client.ts"), results)
-}
-
-// TestGoldenClientsTypeCheck runs the TypeScript compiler over every
-// non-empty client.ts golden so we catch generation-time regressions that
-// produce invalid TypeScript — including issues a linter would flag (the
-// `useLiteralKeys` rule's bracket-notation suggestion, undeclared
-// identifiers, etc.). Skipped when tsc isn't on PATH so the rest of the
-// test suite stays runnable.
-func TestGoldenClientsTypeCheck(t *testing.T) {
-	tscPath, err := exec.LookPath("tsc")
-	if err != nil {
-		t.Skipf("tsc not on PATH: %v", err)
-	}
-	testdata := analysistest.TestData()
-	matches, err := filepath.Glob(filepath.Join(testdata, "gendoctest*", "client.ts"))
-	if err != nil {
-		t.Fatalf("glob client.ts goldens: %v", err)
-	}
-	if len(matches) == 0 {
-		t.Fatalf("no client.ts goldens found under %s", testdata)
-	}
-	for _, p := range matches {
-		p := p
-		name := filepath.Base(filepath.Dir(p))
-		t.Run(name, func(t *testing.T) {
-			info, err := os.Stat(p)
-			if err != nil {
-				t.Fatalf("stat %s: %v", p, err)
-			}
-			// Fatal-case goldens are intentionally empty placeholders;
-			// there's nothing for tsc to check.
-			if info.Size() == 0 {
-				t.Skip("empty fatal-case golden")
-			}
-			cmd := exec.Command(tscPath,
-				"--noEmit",
-				"--strict",
-				"--exactOptionalPropertyTypes",
-				"--target", "es2020",
-				"--module", "esnext",
-				"--moduleResolution", "bundler",
-				"--lib", "es2020,dom",
-				"--skipLibCheck",
-				p,
-			)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("tsc rejected %s:\n%s", p, strings.TrimSpace(string(out)))
-			}
-		})
-	}
-}
-
-func TestGeneratedClientRequestBodies(t *testing.T) {
-	tscPath, err := exec.LookPath("tsc")
-	if err != nil {
-		t.Skipf("tsc not on PATH: %v", err)
-	}
-	nodePath, err := exec.LookPath("node")
-	if err != nil {
-		t.Skipf("node not on PATH: %v", err)
-	}
-	dir := filepath.Join(analysistest.TestData(), "gendoctest")
-	outDir := t.TempDir()
-	cmd := exec.Command(tscPath,
-		"--strict",
-		"--exactOptionalPropertyTypes",
-		"--target", "es2020",
-		"--module", "commonjs",
-		"--moduleResolution", "node",
-		"--lib", "es2020,dom",
-		"--skipLibCheck",
-		"--outDir", outDir,
-		filepath.Join(dir, "client.ts"),
-		filepath.Join(dir, "client_test.ts"),
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("tsc rejected generated client request-body test:\n%s", strings.TrimSpace(string(out)))
-	}
-	cmd = exec.Command(nodePath, filepath.Join(outDir, "client_test.js"))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("generated client request-body test failed:\n%s", strings.TrimSpace(string(out)))
-	}
 }
 
 func assertGoldenClientTS(t *testing.T, goldenPath string, results []*analysistest.Result) {
