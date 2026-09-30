@@ -500,7 +500,7 @@ The `Registry` type implements the `tanukirpc/sessions.RegistryWithAccessor` int
 
 ### Authentication Flow
 
-`tanukirpc` supports the OpenID Connect authentication flow. You can use the `tanukirpc/auth/oidc.NewHandlers` function to create handlers for this flow, which includes a set of handlers to facilitate user authentication.
+`tanukirpc` supports the OpenID Connect authentication flow. The `tanukirpc/auth/oidc.NewHandlers` function creates a set of handlers for the flow: redirecting to the provider, handling the callback, and logging out.
 
 #### Requirements
 
@@ -509,14 +509,77 @@ The `Registry` type implements the `tanukirpc/sessions.RegistryWithAccessor` int
 #### Usage
 
 ```go
-oidcAuth := oidc.NewHandlers(
-    oauth2Config, // *golang.org/x/oauth2.Config
-    provider,     // *github.com/coreos/go-oidc/v3/oidc.Provider
+import (
+    gooidc "github.com/coreos/go-oidc/v3/oidc"
+    "github.com/mackee/tanukirpc/auth/oidc"
+    "golang.org/x/oauth2"
 )
+
+provider, err := gooidc.NewProvider(ctx, "https://accounts.google.com")
+if err != nil {
+    // handle error
+}
+oauth2Config := &oauth2.Config{
+    ClientID:     clientID,
+    ClientSecret: clientSecret,
+    RedirectURL:  "https://example.com/auth/callback",
+    Endpoint:     provider.Endpoint(),
+    Scopes:       []string{gooidc.ScopeOpenID, "email"},
+}
+
+oidcAuth := oidc.NewHandlers[*Registry](oauth2Config, provider)
 router.Route("/auth", func(router *tanukirpc.Router[*Registry]) {
     router.Get("/redirect", tanukirpc.NewHandler(oidcAuth.Redirect))
     router.Get("/callback", tanukirpc.NewHandler(oidcAuth.Callback))
     router.Get("/logout", tanukirpc.NewHandler(oidcAuth.Logout))
+})
+```
+
+By default, after a successful callback, the raw ID token is stored in the session (customizable with `oidc.WithSuccessBehavior`) and the user is redirected back to the page they came from.
+
+#### Restricting who can log in
+
+With the setup above, anyone who can authenticate with the provider can log in. To restrict this, pass `oidc.WithAllowFunc` to `NewHandlers`. It is called in the callback with the verified ID token and decides whether the user is allowed:
+
+```go
+oidcAuth := oidc.NewHandlers(
+    oauth2Config,
+    provider,
+    // Allow users in the example.com Google Workspace, or users with a listed email.
+    oidc.WithAllowFunc(oidc.AllowAnyOf(
+        oidc.AllowDomains[*Registry]("example.com"),
+        oidc.AllowEmails[*Registry]("alice@gmail.com", "bob@example.org"),
+    )),
+)
+```
+
+The following conditions are built in, and can be combined with `oidc.AllowAnyOf` (OR) and `oidc.AllowAllOf` (AND):
+
+- `oidc.AllowDomains`: the `hd` claim (Google Workspace hosted domain) is one of the domains. Personal accounts such as gmail.com have no `hd` claim. `oidc.WithAllowedDomains(...)` is a shorthand for `oidc.WithAllowFunc(oidc.AllowDomains(...))`.
+- `oidc.AllowEmails`: the `email` claim is verified and one of the emails. It requires the `email` scope. Emails are compared case-insensitively, and dots in gmail.com addresses are ignored.
+
+When `oidc.WithAllowFunc` is given more than once, all of them must allow the user.
+
+For other conditions, pass your own function. Return `nil` to allow, an error wrapping `oidc.ErrNotAllowed` to reject, and any other error to report an internal failure. For example, to allow only users registered in a database:
+
+```go
+oidc.WithAllowFunc(func(ctx tanukirpc.Context[*Registry], idToken *gooidc.IDToken) error {
+    ok, err := ctx.Registry().Users().Exists(ctx, idToken.Subject)
+    if err != nil {
+        return err // internal error
+    }
+    if !ok {
+        return oidc.ErrNotAllowed
+    }
+    return nil
+})
+```
+
+A rejected user gets a 403 response by default. Use `oidc.WithNotAllowedBehavior` to customize it, e.g. to redirect to an error page:
+
+```go
+oidc.WithNotAllowedBehavior(func(ctx tanukirpc.Context[*Registry]) error {
+    return tanukirpc.ErrorRedirectTo(http.StatusFound, "/not-allowed")
 })
 ```
 

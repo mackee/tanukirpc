@@ -2,10 +2,10 @@
 package oidc
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -17,14 +17,14 @@ import (
 
 // Handlers is a set of handlers for OIDC authentication.
 type Handlers[Reg sessions.RegistryWithAccessor] struct {
-	defaultReferrer          string
-	allowedDomains           []string
-	oauth2Config             *oauth2.Config
-	verifier                 *oidc.IDTokenVerifier
-	referrerBaseURL          string
-	successBehavior          func(tanukirpc.Context[Reg], *SuccessBehaviorInput) error
-	unauthorizedBehavior     func(tanukirpc.Context[Reg]) error
-	notAllowedDomainBehavior func(tanukirpc.Context[Reg]) error
+	defaultReferrer      string
+	allowers             []Allower[Reg]
+	oauth2Config         *oauth2.Config
+	verifier             *oidc.IDTokenVerifier
+	referrerBaseURL      string
+	successBehavior      func(tanukirpc.Context[Reg], *SuccessBehaviorInput) error
+	unauthorizedBehavior func(tanukirpc.Context[Reg]) error
+	notAllowedBehavior   func(tanukirpc.Context[Reg]) error
 }
 
 // HandlersOption is an option for Handlers.
@@ -37,11 +37,24 @@ func WithDefaultReferrer[Reg sessions.RegistryWithAccessor](referrer string) Han
 	}
 }
 
-// WithAllowedDomains sets the allowed domains.
-func WithAllowedDomains[Reg sessions.RegistryWithAccessor](domains ...string) HandlersOption[Reg] {
+// WithAllowFunc adds a function that decides whether the authenticated user is allowed.
+// The function returns nil to allow, an error wrapping ErrNotAllowed to reject,
+// and any other error to report an internal failure.
+// When specified multiple times (including WithAllowedDomains), all of them must allow the user.
+// To allow the user when any of several conditions is met, use AllowAnyOf.
+func WithAllowFunc[Reg sessions.RegistryWithAccessor](fn func(ctx tanukirpc.Context[Reg], idToken *oidc.IDToken) error) HandlersOption[Reg] {
 	return func(a *Handlers[Reg]) {
-		a.allowedDomains = domains
+		a.allowers = append(a.allowers, AllowFunc[Reg](fn))
 	}
+}
+
+// WithAllowedDomains allows only users whose "hd" claim (Google Workspace hosted domain) is one of the domains.
+// It is a shorthand of WithAllowFunc(AllowDomains(domains...)), except that it has no effect if no domains are given.
+func WithAllowedDomains[Reg sessions.RegistryWithAccessor](domains ...string) HandlersOption[Reg] {
+	if len(domains) == 0 {
+		return func(*Handlers[Reg]) {}
+	}
+	return WithAllowFunc(AllowDomains[Reg](domains...))
 }
 
 // WithReferrerBaseURL sets the referrer base URL.
@@ -79,11 +92,18 @@ func WithUnauthorizedRedirect[Reg sessions.RegistryWithAccessor](url string) Han
 	}
 }
 
-// WithNotAllowedDomainBehavior sets the not allowed behavior.
-func WithNotAllowedDomainBehavior[Reg sessions.RegistryWithAccessor](fn func(tanukirpc.Context[Reg]) error) HandlersOption[Reg] {
+// WithNotAllowedBehavior sets the behavior when the user is rejected by WithAllowFunc or WithAllowedDomains.
+func WithNotAllowedBehavior[Reg sessions.RegistryWithAccessor](fn func(tanukirpc.Context[Reg]) error) HandlersOption[Reg] {
 	return func(a *Handlers[Reg]) {
-		a.notAllowedDomainBehavior = fn
+		a.notAllowedBehavior = fn
 	}
+}
+
+// WithNotAllowedDomainBehavior sets the not allowed behavior.
+//
+// Deprecated: Use WithNotAllowedBehavior instead.
+func WithNotAllowedDomainBehavior[Reg sessions.RegistryWithAccessor](fn func(tanukirpc.Context[Reg]) error) HandlersOption[Reg] {
+	return WithNotAllowedBehavior(fn)
 }
 
 // NewHandlers creates a new Handlers.
@@ -218,20 +238,15 @@ func (a *Handlers[Reg]) Callback(ctx tanukirpc.Context[Reg], req AuthCallbackReq
 		)
 		return struct{}{}, tanukirpc.WrapErrorWithStatus(http.StatusBadRequest, fmt.Errorf("request invalid"))
 	}
-	type claims struct {
-		Hd string `json:"hd"`
-	}
-	var idTokenClaims claims
-	if err := idToken.Claims(&idTokenClaims); err != nil {
-		return struct{}{}, fmt.Errorf("failed to parse claims: %w", err)
-	}
-
-	allowed := len(a.allowedDomains) == 0 || slices.Contains(a.allowedDomains, idTokenClaims.Hd)
-	if !allowed {
-		if a.notAllowedDomainBehavior != nil {
-			return struct{}{}, a.notAllowedDomainBehavior(ctx)
+	if err := a.allow(ctx, idToken); err != nil {
+		if !errors.Is(err, ErrNotAllowed) {
+			return struct{}{}, fmt.Errorf("failed to check allowed: %w", err)
 		}
-		return struct{}{}, tanukirpc.WrapErrorWithStatus(http.StatusForbidden, fmt.Errorf("domain not allowed"))
+		slog.WarnContext(ctx, "not allowed", slog.String("subject", idToken.Subject), slog.Any("error", err))
+		if a.notAllowedBehavior != nil {
+			return struct{}{}, a.notAllowedBehavior(ctx)
+		}
+		return struct{}{}, tanukirpc.WrapErrorWithStatus(http.StatusForbidden, ErrNotAllowed)
 	}
 
 	referrer := a.getReferrer(ctx, "redirect_referrer")
@@ -254,6 +269,15 @@ func (a *Handlers[Reg]) Callback(ctx tanukirpc.Context[Reg], req AuthCallbackReq
 	}
 
 	return struct{}{}, tanukirpc.ErrorRedirectTo(http.StatusFound, referrer)
+}
+
+func (a *Handlers[Reg]) allow(ctx tanukirpc.Context[Reg], idToken *oidc.IDToken) error {
+	for _, allower := range a.allowers {
+		if err := allower.Allow(ctx, idToken); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Logout logs out the user.
