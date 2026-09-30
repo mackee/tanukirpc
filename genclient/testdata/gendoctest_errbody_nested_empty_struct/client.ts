@@ -62,7 +62,10 @@ type client = {
 
 type myFetcher = (input: string, init: { method: string; headers: Record<string, string>; body: string | undefined; }) => Promise<Response>;
 
-export const newClient = (baseURL = "", myFetch: myFetcher = fetch): client => {
+export const newClient = (
+  baseURL = "",
+  myFetch: myFetcher = (input, { body, ...init }) => fetch(input, body === undefined ? init : { ...init, body }),
+): client => {
   const fetchByPath = async <PM extends keyof apiSchemaCollection>(method: method, path: string, args: pathCallArgs<PM>) => {
     const builtPath = path;
     const query = hasApiQuery(args) ? `?${new URLSearchParams(args.query).toString()}` : "";
