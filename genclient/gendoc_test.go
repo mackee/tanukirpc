@@ -263,3 +263,7 @@ func assertGoldenClientTS(t *testing.T, goldenPath string, results []*analysiste
 			goldenPath, string(want), got.String())
 	}
 }
+
+func TestGenerateTypeScriptClientIgnoresClosuresWithoutAnalyzeTargetImport(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), genclient.TypeScriptClientGenerator, "./gendoctest_no_target")
+}

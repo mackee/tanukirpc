@@ -82,6 +82,10 @@ func run(pass *analysis.Pass) (any, error) {
 		"AnalyzeTarget",
 	)
 
+	if analyzeTargetObj == nil {
+		return &AnalyzerResult{}, nil
+	}
+
 	ssaresult := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
 
 	// First collect every AnalyzeTarget call so we can reject the
