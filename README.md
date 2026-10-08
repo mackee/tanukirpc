@@ -589,6 +589,32 @@ oidc.WithNotAllowedBehavior(func(ctx tanukirpc.Context[*Registry]) error {
 })
 ```
 
+#### PKCE
+
+PKCE (S256) is enabled by default. `Redirect` stores the code verifier in the session, and `Callback` sends it to the token endpoint. A callback whose session has no code verifier is rejected with 400, so:
+
+- Logins that are in progress while you deploy this change, or while servers with and without PKCE coexist, fail once. Users can log in again.
+- `Redirect` and `Callback` must both be served by `oidc.Handlers` with the same setting, sharing the session.
+
+If the provider rejects PKCE, or if you build the authorization URL or exchange the code yourself, disable it with `oidc.WithoutPKCE()`.
+
+#### Additional authorization request parameters
+
+Use `oidc.WithAuthCodeOptions` to add parameters to the authorization request, e.g. to let users choose an account every time, or to hint the Google Workspace domain:
+
+```go
+oidcAuth := oidc.NewHandlers(
+    oauth2Config,
+    provider,
+    oidc.WithAuthCodeOptions[*Registry](
+        oauth2.SetAuthURLParam("prompt", "select_account"),
+        oauth2.SetAuthURLParam("hd", "example.com"),
+    ),
+)
+```
+
+`hd` is only a hint to the provider. To restrict users by domain, use `oidc.WithAllowedDomains` as well. The options cannot override `state`, `nonce` and the PKCE parameters.
+
 ### Inertia.js support
 
 `tanukirpc` provides an opt-in Inertia.js codec in the `github.com/mackee/tanukirpc/codec/inertiajs` package. It is not enabled by default, so API-only applications keep the default JSON/form/raw-body behavior.
