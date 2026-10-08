@@ -26,6 +26,8 @@ type Handlers[Reg sessions.RegistryWithAccessor] struct {
 	successBehavior      func(tanukirpc.Context[Reg], *SuccessBehaviorInput) error
 	unauthorizedBehavior func(tanukirpc.Context[Reg]) error
 	notAllowedBehavior   func(tanukirpc.Context[Reg]) error
+	authCodeOptions      []oauth2.AuthCodeOption
+	disablePKCE          bool
 }
 
 // HandlersOption is an option for Handlers.
@@ -107,7 +109,28 @@ func WithNotAllowedDomainBehavior[Reg sessions.RegistryWithAccessor](fn func(tan
 	return WithNotAllowedBehavior(fn)
 }
 
+// WithAuthCodeOptions adds options to the authorization request, such as
+// oauth2.SetAuthURLParam("prompt", "select_account") or oauth2.SetAuthURLParam("hd", "example.com").
+// Note that "hd" is only a hint to the provider; use WithAllowedDomains to enforce it.
+// The options cannot override "state", "nonce" and the PKCE parameters set by Redirect.
+func WithAuthCodeOptions[Reg sessions.RegistryWithAccessor](opts ...oauth2.AuthCodeOption) HandlersOption[Reg] {
+	return func(a *Handlers[Reg]) {
+		a.authCodeOptions = append(a.authCodeOptions, opts...)
+	}
+}
+
+// WithoutPKCE disables PKCE, which is enabled by default.
+// Use it only if the provider rejects PKCE, or if either Redirect or Callback is not used
+// and the other one does not handle the code verifier.
+func WithoutPKCE[Reg sessions.RegistryWithAccessor]() HandlersOption[Reg] {
+	return func(a *Handlers[Reg]) {
+		a.disablePKCE = true
+	}
+}
+
 // NewHandlers creates a new Handlers.
+// PKCE (S256) is enabled by default. The code verifier is stored in the session by Redirect
+// and required by Callback, so both must be enabled or disabled together.
 func NewHandlers[Reg sessions.RegistryWithAccessor](oauth2Config *oauth2.Config, provider *oidc.Provider, opts ...HandlersOption[Reg]) *Handlers[Reg] {
 	verifier := provider.Verifier(&oidc.Config{ClientID: oauth2Config.ClientID})
 	h := &Handlers[Reg]{
@@ -218,6 +241,16 @@ func (a *Handlers[Reg]) Redirect(ctx tanukirpc.Context[Reg], _ struct{}) (_resp 
 		return struct{}{}, fmt.Errorf("failed to set nonce: %w", err)
 	}
 
+	// The options set by Redirect come last so that authCodeOptions cannot override them.
+	opts := append(append([]oauth2.AuthCodeOption{}, a.authCodeOptions...), oidc.Nonce(nonce))
+	if !a.disablePKCE {
+		verifier := oauth2.GenerateVerifier()
+		if err := reg.Session().Set("pkce_verifier", verifier); err != nil {
+			return struct{}{}, fmt.Errorf("failed to set pkce verifier: %w", err)
+		}
+		opts = append(opts, oauth2.S256ChallengeOption(verifier))
+	}
+
 	if err := a.setReferrer(ctx, "redirect_referrer"); err != nil {
 		return struct{}{}, fmt.Errorf("failed to set referrer: %w", err)
 	}
@@ -226,7 +259,7 @@ func (a *Handlers[Reg]) Redirect(ctx tanukirpc.Context[Reg], _ struct{}) (_resp 
 		return struct{}{}, fmt.Errorf("failed to save session: %w", err)
 	}
 
-	return struct{}{}, tanukirpc.ErrorRedirectTo(http.StatusFound, a.oauth2Config.AuthCodeURL(state, oidc.Nonce(nonce)))
+	return struct{}{}, tanukirpc.ErrorRedirectTo(http.StatusFound, a.oauth2Config.AuthCodeURL(state, opts...))
 }
 
 type AuthCallbackRequest struct {
@@ -253,7 +286,23 @@ func (a *Handlers[Reg]) Callback(ctx tanukirpc.Context[Reg], req AuthCallbackReq
 		return struct{}{}, tanukirpc.WrapErrorWithStatus(http.StatusBadRequest, fmt.Errorf("request invalid"))
 	}
 
-	token, err := a.oauth2Config.Exchange(ctx.Request().Context(), req.Code)
+	var exchangeOpts []oauth2.AuthCodeOption
+	if !a.disablePKCE {
+		// Do not fall back to the exchange without PKCE; the session may have been
+		// started before PKCE was enabled, which is rejected like a missing state.
+		verifier, ok := reg.Session().Get("pkce_verifier")
+		if !ok {
+			slog.WarnContext(ctx, "pkce verifier not found")
+			return struct{}{}, tanukirpc.WrapErrorWithStatus(http.StatusBadRequest, fmt.Errorf("request invalid"))
+		}
+		if err := reg.Session().Remove("pkce_verifier"); err != nil {
+			return struct{}{}, fmt.Errorf("failed to remove pkce verifier: %w", err)
+		}
+		v, _ := verifier.(string)
+		exchangeOpts = append(exchangeOpts, oauth2.VerifierOption(v))
+	}
+
+	token, err := a.oauth2Config.Exchange(ctx.Request().Context(), req.Code, exchangeOpts...)
 	if err != nil {
 		return struct{}{}, fmt.Errorf("failed to exchange code for token: %w", err)
 	}
