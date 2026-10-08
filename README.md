@@ -537,6 +537,12 @@ router.Route("/auth", func(router *tanukirpc.Router[*Registry]) {
 
 By default, after a successful callback, the raw ID token is stored in the session (customizable with `oidc.WithSuccessBehavior`) and the user is redirected back to the page they came from.
 
+The page to return to is decided when the login starts, in this order:
+
+1. The `return_to` query parameter of the redirect endpoint (e.g. `/auth/redirect?return_to=/items/1`). It must be a path on the same origin; absolute URLs, `//...` and `/\...` are ignored. This is useful for SPAs, which may not send a meaningful `Referer`.
+2. The `Referer` header, only if it is on the same origin. The origin is the one given by `oidc.WithReferrerBaseURL`, or the `Host` of the request if not given.
+3. The default referrer (`/`, customizable with `oidc.WithDefaultReferrer`).
+
 #### Restricting who can log in
 
 With the setup above, anyone who can authenticate with the provider can log in. To restrict this, pass `oidc.WithAllowFunc` to `NewHandlers`. It is called in the callback with the verified ID token and decides whether the user is allowed:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -122,21 +123,56 @@ func NewHandlers[Reg sessions.RegistryWithAccessor](oauth2Config *oauth2.Config,
 	return h
 }
 
+// referrer returns the path of the Referer header if it is same-origin, or "" otherwise.
+// The origin is the one of WithReferrerBaseURL if specified, or the host of the request.
 func (a *Handlers[Reg]) referrer(req *http.Request) string {
-	referrer := req.Referer()
-	if referrer == "" && a.referrerBaseURL != "" {
-		s := strings.TrimPrefix(referrer, a.referrerBaseURL)
-		if !strings.HasPrefix("/", s) {
-			s = "/" + s
-		}
-		referrer = s
+	ref, err := url.Parse(req.Referer())
+	if err != nil || ref.Host == "" {
+		return ""
 	}
-	return referrer
+	if a.referrerBaseURL != "" {
+		base, err := url.Parse(a.referrerBaseURL)
+		if err != nil || !strings.EqualFold(ref.Scheme, base.Scheme) || !strings.EqualFold(ref.Host, base.Host) {
+			return ""
+		}
+	} else if !strings.EqualFold(ref.Host, req.Host) {
+		return ""
+	}
+	path := ref.RequestURI()
+	if !isLocalPath(path) {
+		return ""
+	}
+	return path
+}
+
+// returnTo returns the "return_to" query parameter if it is a local path, or "" otherwise.
+func returnTo(req *http.Request) string {
+	path := req.URL.Query().Get("return_to")
+	if !isLocalPath(path) {
+		return ""
+	}
+	return path
+}
+
+// isLocalPath reports whether path is an absolute path on the same origin.
+// It rejects protocol-relative URLs such as "//evil.example" and "/\evil.example",
+// and control characters that browsers strip before resolving the URL.
+func isLocalPath(path string) bool {
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+		return false
+	}
+	return !strings.ContainsFunc(path, func(r rune) bool {
+		return r == '\\' || r < 0x20 || r == 0x7f
+	})
 }
 
 func (a *Handlers[Reg]) setReferrer(ctx tanukirpc.Context[Reg], name string) error {
 	req := ctx.Request()
-	if referrer := a.referrer(req); referrer != "" {
+	referrer := returnTo(req)
+	if referrer == "" {
+		referrer = a.referrer(req)
+	}
+	if referrer != "" {
 		if err := ctx.Registry().Session().Set(name, referrer); err != nil {
 			return fmt.Errorf("failed to set referrer: %w", err)
 		}
@@ -147,14 +183,21 @@ func (a *Handlers[Reg]) setReferrer(ctx tanukirpc.Context[Reg], name string) err
 func (a *Handlers[Reg]) getReferrer(ctx tanukirpc.Context[Reg], name string) string {
 	reg := ctx.Registry()
 	referrer, ok := reg.Session().Get(name)
-	if ok {
-		reg.Session().Remove(name)
-		return referrer.(string)
+	if !ok {
+		return a.defaultReferrer
+	}
+	reg.Session().Remove(name)
+	// Sessions saved by older versions may hold a cross-origin URL.
+	if s, ok := referrer.(string); ok && isLocalPath(s) {
+		return s
 	}
 	return a.defaultReferrer
 }
 
 // Redirect redirects to the OIDC provider.
+// After a successful login, Callback redirects back to the "return_to" query parameter
+// if it is a local path such as "/dashboard", or to the Referer header if it is same-origin,
+// or to the default referrer.
 func (a *Handlers[Reg]) Redirect(ctx tanukirpc.Context[Reg], _ struct{}) (_resp struct{}, err error) {
 	reg := ctx.Registry()
 
